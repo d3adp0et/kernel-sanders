@@ -334,25 +334,3 @@ Embed **monocypher** directly into `librootkit.so`. It's two files (`monocypher.
 6. **Correct nonce hygiene** — random per-message nonces prevent nonce reuse, which is the primary failure mode for stream cipher-based AEAD schemes.
 
 ---
-
-## Implementation Order
-
-1. `librootkit.so` skeleton — `dlsym` wrappers build and load without crashing
-2. `readdir` hiding — test with `ls /proc`, look for filtered entries
-3. `/proc/self/maps` filtering — test with `cat /proc/self/maps` from within a preloaded process
-4. Beacon loop — plaintext TCP first, confirm C2 connectivity end-to-end
-5. Add monocypher — replace `send`/`recv` with `encrypted_send`/`encrypted_recv`, update C2 server to decrypt
-6. `rootkit.ko` — kretprobe on `getdents64`, module self-hide with `list_del_init`
-7. Injection + privesc — tie to kernel backdoor handshake
-8. Full integration test — exploit → load → beacon → C2 issues command → result comes back encrypted
-
----
-
-## What You Still Need from the Instructor
-
-- `MERIDIAN` binary (TCP server on :1337, `submit` command has the mmap RWX bug)
-- `vuln_rwx.ko` (JIT engine driver — `module_alloc` + copy user code + call it at EL1)
-- `vuln_rw.ko` (arbitrary kernel read/write via `KREAD`/`KWRITE` ioctls)
-- `setup_capstone.sh` (loads the above drivers, starts MERIDIAN at boot)
-
-Also needed in [scripts/start.sh](vscode-webview://0o53evmk4clop05fg11gjcsjc1vu6u5e74uphke19ejh2ma1lfc5/scripts/start.sh): add `hostfwd=tcp::11337-:1337` — currently only SSH port 22 is forwarded.
