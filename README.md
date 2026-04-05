@@ -3,6 +3,8 @@
 
 A security capstone project designing a rootkit that demonstrates a full attack chain from initial exploitation to persistent kernel-level compromise with an encrypted C2 channel.
 
+<img width="850" height="631" alt="image" src="https://github.com/user-attachments/assets/47479df5-7167-478a-89a3-88a87d05d286" />
+
 ---
 ### Architecture
 The attack chain runs in four stages:
