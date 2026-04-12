@@ -3,7 +3,7 @@
 
 A security capstone project designing a rootkit that demonstrates a full attack chain from initial exploitation to persistent kernel-level compromise with an encrypted C2 channel.
 
-<img width="850" height="631" alt="image" src="https://github.com/user-attachments/assets/47479df5-7167-478a-89a3-88a87d05d286" />
+<img width="1066" height="792" alt="image" src="https://github.com/user-attachments/assets/b95cda4e-ea02-4ec7-929f-d510cb509304" />
 
 ---
 ### Architecture
@@ -19,18 +19,11 @@ Two components work together:
 
 | Component | Layer | Purpose |
 |---|---|---|
-| `librootkit.so` | Userland (`LD_PRELOAD`) | File/process hiding, diskless exec, encrypted beacon |
 | `rootkit.ko` | Kernel (EL1) | kretprobe hooks, module self-hiding, code injection, kernel backdoor |
 
 ---
 
 ## Features
-
-### Userland (`librootkit.so`)
-- **File & process hiding** — wraps `readdir`/`readdir64` to filter entries with a magic prefix (`ghost_`)
-- **Diskless ELF execution** — runs payloads via `memfd_create` + `fexecve`, no file ever touches disk
-- **Self-concealment** — hooks `fopen`/`open` to strip itself from `/proc/<pid>/maps`
-- **Encrypted beacon** — auto-starts on library load; communicates with C2 over [maybe ChaCha20-Poly1305]?- special feature
 
 ### Kernel (`rootkit.ko`)
 - **Kernel-level hiding** — kretprobe on `sys_getdents64` filters directory entries for all processes
