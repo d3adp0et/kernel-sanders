@@ -24,6 +24,7 @@
 #include <linux/ftrace.h>
 #include <linux/kprobes.h>
 #include <linux/cred.h>
+#include <linux/namei.h>
 
 #include "rootkit.h"
 
@@ -34,6 +35,7 @@ MODULE_DESCRIPTION("Capstone LKM rootkit, access blocking with path protection")
 /* Access blocking*/
 
 static unsigned long target_func_addr;
+bool blocking_active;
 
 
 static void notrace blocking_callback(unsigned long ip, unsigned long parent_ip, struct ftrace_ops *op, struct ftrace_regs *fregs)
@@ -94,9 +96,6 @@ static struct ftrace_ops blocking_ops = {
 	.func  = blocking_callback,
 	.flags = FTRACE_OPS_FL_IPMODIFY | FTRACE_OPS_FL_RECURSION,
 };
-
-
-bool blocking_active;
 
 
 int blocking_init(void)
