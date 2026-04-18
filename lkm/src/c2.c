@@ -177,15 +177,15 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
     case CMD_STATUS:
       pr_info("[rootkit][status] Current state log:");
       status = file_hide_is_active();
-      pr_info("[rootkit][status]    File hiding        = %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    File hiding---------+ %s\n", status ? "ENABLED" : "DISABLED");
       status = blocking_active;
-      pr_info("[rootkit][status]    File blocking      - %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    File blocking-------+ %s\n", status ? "ENABLED" : "DISABLED");
       /*
       status = module_hidden;
-      pr_info("[rootkit][status]    Module self-hiding - %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    Module self-hiding--+ %s\n", status ? "ENABLED" : "DISABLED");
       */
       status = proc_hide_is_active();
-      pr_info("[rootkit][status]    Process hiding     - %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    Process hiding------+ %s\n", status ? "ENABLED" : "DISABLED");
       break;
     case CMD_TOGGLE_HIDE:
       schedule_toggle(CMD_TOGGLE_HIDE);
