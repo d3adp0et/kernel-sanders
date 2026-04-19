@@ -1,0 +1,46 @@
+=== Capstone: LKM Rootkit Tests ===
+
+Loading module: rootkit.ko
+[   66.972234] [rootkit] All modules unloaded
+[  123.994167] [rootkit] initializing
+[  123.995351] [C2] kprobe registered
+[  123.995688] [inject] injection subsystem ready
+[  123.996520] [file_hide] kretprobe registered
+[  123.997114] [proc_hide] kretprobe registered
+  PASS: insmod rootkit.ko
+
+--- Access blocking ---
+[  124.027773] [rootkit] All modules loaded
+[  125.210041] [rootkit][blocking] blocked access to /tmp/secret
+  PASS: /tmp/secret/flag.txt blocked
+[  125.230852] [rootkit][blocking] blocked access to /dev/shm/secret
+  PASS: /dev/shm/secret/flag.txt blocked
+[  125.255796] [rootkit][blocking] blocked access to /tmp/secret
+  PASS: ls /tmp/secret/ blocked
+[  125.287430] [rootkit][blocking] blocked access to /tmp/secret
+  PASS: Traversal path to /tmp/secret blocked
+  PASS: Blocked access logged in dmesg
+  PASS: Non-hidden file still accessible
+
+=== Results: 7 passed, 0 failed, 0 skipped (out of 7) ===
+[  125.394612] [C2] C2 active on signal 62
+[  125.394665] [C2] command 3 from [-2086197760]
+[  125.395219] [C2][WARNING] unknown command 3
+[  125.395675] [C2] usage: kill -62 <cmd>
+[  125.396097] [C2]   0 - status
+[  125.396434] [C2]   1 - file hiding
+[  125.396815] [C2]   2 - access blocking
+[  125.397162] [C2]   3 - unhide module (not implemented yet)
+[  125.397538] [C2]   4 - proc hiding
+[  125.397793] [C2]   5 - add GID
+[  125.398028] [C2]   6 - inject
+[  125.398237] [C2]   7 - revshell
+OK: hide-module
+[  125.983295] [rootkit] cleaning up
+[  126.249209] [rootkit][blocking] ftrace unregistered
+[  126.263322] [proc_hide] nmissed counter:0
+[  126.279833] [file_hide] kretprobe unregistered
+[  126.279898] [file_hide] nmissed counter:0
+[  126.280685] [inject] injection subsystem cleaned up
+[  126.295377] [C2] kprobe unregistered
+

@@ -1,0 +1,67 @@
+=== Capstone: LKM Rootkit Tests ===
+
+Loading module: rootkit.ko
+[   49.336813] [rootkit] initializing
+[   49.339619] [C2] kprobe registered
+[   49.340382] [inject] injection subsystem ready
+[   49.341908] [file_hide] kretprobe registered
+[   49.343087] [proc_hide] kretprobe registered
+  PASS: insmod rootkit.ko
+
+--- C2 ---
+[   49.383783] [rootkit] All modules loaded
+[   50.546874] [C2] C2 active on signal 62
+[   50.547222] [C2] command 0 from [-1001025280]
+[   50.547821] [rootkit][status] Current state log:
+[   50.547872] [rootkit][status]    File hiding----------> ENABLED
+[   50.548466] [rootkit][status]    File blocking--------> ENABLED
+[   50.548769] [rootkit][status]    Process hiding-------> ENABLED
+OK: status
+  PASS: C2 status
+  PASS: Regular kill unaffected
+[   50.566363] [C2] C2 active on signal 62
+[   50.566465] [C2] command 1 from [-993757440]
+OK: hide-files
+[   50.589279] [file_hide] kretprobe unregistered
+[   50.589352] [file_hide] nmissed counter:0
+[   50.589894] [rootkit] file hiding OFF
+  PASS: C2: file hiding disabled
+[   51.644906] [C2] C2 active on signal 62
+[   51.644952] [C2] command 1 from [-1852379904]
+[   51.645533] [file_hide] kretprobe registered
+[   51.645640] [rootkit] file hiding ON
+OK: hide-files
+  PASS: C2: file hiding re-enabled
+[   52.725065] [C2] C2 active on signal 62
+[   52.725113] [C2] command 2 from [450430976]
+OK: block
+flag_tmp
+  PASS: C2: access blocking disabled
+[   53.828538] [C2] C2 active on signal 62
+[   53.828597] [C2] command 2 from [1390287616]
+OK: block
+[   54.958866] [rootkit][blocking] blocked access to /tmp/secret
+  PASS: C2: access blocking re-enabled
+  PASS: Non-magic signal passes through
+
+=== Results: 8 passed, 0 failed, 0 skipped (out of 8) ===
+[   55.584913] [C2] C2 active on signal 62
+[   55.584958] [C2] command 3 from [1909874176]
+[   55.585406] [C2][WARNING] unknown command 3
+[   55.585599] [C2] usage: kill -62 <cmd>
+[   55.585782] [C2]   0 - status
+[   55.585920] [C2]   1 - file hiding
+[   55.586079] [C2]   2 - access blocking
+[   55.586249] [C2]   3 - unhide module (not implemented yet)
+[   55.586509] [C2]   4 - proc hiding
+[   55.586752] [C2]   5 - add GID
+[   55.587070] [C2]   6 - inject
+[   55.587218] [C2]   7 - revshell
+OK: hide-module
+[   56.163063] [rootkit] cleaning up
+[   56.273612] [rootkit][blocking] ftrace unregistered
+[   56.295616] [proc_hide] nmissed counter:0
+[   56.315554] [file_hide] kretprobe unregistered
+[   56.315642] [file_hide] nmissed counter:0
+[   56.316205] [inject] injection subsystem cleaned up
+[   56.350619] [C2] kprobe unregistered

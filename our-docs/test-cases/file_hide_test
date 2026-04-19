@@ -1,0 +1,38 @@
+=== Capstone: LKM Rootkit Tests ===
+
+Loading module: rootkit.ko
+[   56.350703] [rootkit] All modules unloaded
+[  783.313625] [rootkit] initializing
+[  783.314449] [C2] kprobe registered
+[  783.314921] [inject] injection subsystem ready
+[  783.316125] [file_hide] kretprobe registered
+[  783.316871] [proc_hide] kretprobe registered
+  PASS: insmod rootkit.ko
+
+--- File hiding ---
+  PASS: /tmp/secret hidden from ls /tmp
+  PASS: /dev/shm/secret hidden from ls /dev/shm
+  PASS: normal_file.txt still visible in /tmp
+
+=== Results: 4 passed, 0 failed, 0 skipped (out of 4) ===
+[  783.346527] [rootkit] All modules loaded
+[  784.526494] [C2] C2 active on signal 62
+[  784.526921] [C2] command 3 from [-904433152]
+[  784.527618] [C2][WARNING] unknown command 3
+[  784.527846] [C2] usage: kill -62 <cmd>
+[  784.528057] [C2]   0 - status
+[  784.528223] [C2]   1 - file hiding
+[  784.528408] [C2]   2 - access blocking
+[  784.528614] [C2]   3 - unhide module (not implemented yet)
+[  784.528895] [C2]   4 - proc hiding
+[  784.529085] [C2]   5 - add GID
+[  784.529255] [C2]   6 - inject
+[  784.529417] [C2]   7 - revshell
+OK: hide-module
+[  785.096018] [rootkit] cleaning up
+[  785.235830] [rootkit][blocking] ftrace unregistered
+[  785.251807] [proc_hide] nmissed counter:0
+[  785.283784] [file_hide] kretprobe unregistered
+[  785.283856] [file_hide] nmissed counter:0
+[  785.284107] [inject] injection subsystem cleaned up
+[  785.304379] [C2] kprobe unregistered

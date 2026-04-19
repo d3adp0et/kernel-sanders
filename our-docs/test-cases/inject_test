@@ -1,0 +1,53 @@
+=== Capstone: LKM Rootkit Tests ===
+
+Loading module: rootkit.ko
+[  171.851297] [rootkit] All modules unloaded
+[  299.136690] [rootkit] initializing
+[  299.137849] [C2] kprobe registered
+[  299.138153] [inject] injection subsystem ready
+[  299.139121] [file_hide] kretprobe registered
+[  299.139961] [proc_hide] kretprobe registered
+  PASS: insmod rootkit.ko
+
+--- Injection ---
+[  299.170086] [rootkit] All modules loaded
+[  300.824073] [C2] C2 active on signal 62
+[  300.826090] [C2] command 5 from [2037001984]
+OK: add-gid
+[*] Staged inject_test.bin → /tmp/secret/rk_sc
+[  301.918283] [C2] C2 active on signal 62
+[  301.918325] [C2] command 6 from [551653120]
+[  301.918703] [inject] target PID 334 ()
+[  301.919389] [rootkit] loaded 340 bytes from staging file
+[  301.920036] [inject] code page at ffff88f9a000
+[  301.920608] [inject] stack page at ffff88f99000
+[  301.921489] [inject] trampoline at aaaac5390100
+[  301.921898] [inject] injection complete: PID 334 code=ffff88f9a000 tramp=aaaac5390100
+OK: inject
+./test_lkm.sh: line 304:   334 Segmentation fault      sleep 300
+  PASS: Shellcode created /tmp/pwned
+  PASS: /tmp/pwned contains INJECTED-1337
+  FAIL: Target died after injection
+
+=== Results: 3 passed, 1 failed, 0 skipped (out of 4) ===
+  dmesg: sudo dmesg | grep rootkit
+[  305.057917] [C2] C2 active on signal 62
+[  305.057963] [C2] command 3 from [1858626304]
+[  305.058415] [C2][WARNING] unknown command 3
+[  305.058632] [C2] usage: kill -62 <cmd>
+[  305.058803] [C2]   0 - status
+[  305.058934] [C2]   1 - file hiding
+[  305.059091] [C2]   2 - access blocking
+[  305.059256] [C2]   3 - unhide module (not implemented yet)
+[  305.059487] [C2]   4 - proc hiding
+[  305.059663] [C2]   5 - add GID
+[  305.059816] [C2]   6 - inject
+[  305.060218] [C2]   7 - revshell
+OK: hide-module
+[  305.745276] [rootkit] cleaning up
+[  305.818330] [rootkit][blocking] ftrace unregistered
+[  305.841298] [proc_hide] nmissed counter:0
+[  305.861079] [file_hide] kretprobe unregistered
+[  305.861158] [file_hide] nmissed counter:0
+[  305.861978] [inject] injection subsystem cleaned up
+[  305.875346] [C2] kprobe unregistered
