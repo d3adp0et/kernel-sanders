@@ -1,4 +1,4 @@
-/* ftrace fires on do_symlinkat to block any creation of symlinks on hidden directories */
+/* ftrace fires on __arm64_sys_symlinkat to block any creation of symlinks on hidden directories */
 
 #include <linux/module.h>
 #include <linux/kernel.h>
