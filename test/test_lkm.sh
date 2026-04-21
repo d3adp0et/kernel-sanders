@@ -44,6 +44,7 @@ rkcmd() {
             block)       kill -62 2 2>/dev/null ;;
             hide-module) kill -62 3 2>/dev/null ;;
             hide-procs)  kill -62 4 2>/dev/null ;;
+            hide-slinks) kill -62 8 2>/dev/null ;;
             *)           return 1 ;;
         esac
     fi
@@ -61,6 +62,7 @@ cleanup() {
     fi
     rm -rf /tmp/secret /dev/shm/secret 2>/dev/null || true
     rm -f /tmp/normal_file.txt /tmp/pwned 2>/dev/null || true
+    rm -f /tmp/my_secret_link /tmp/my_shm_link /tmp/my_normal_link 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -172,6 +174,35 @@ run_access_block_tests() {
     else
         fail "Non-hidden file broken"
     fi
+}
+
+# -- Symlink blocking ---------------------------------------------------------
+
+run_slink_block_tests() {
+    echo ""
+    echo "--- Symlink blocking ---"
+
+    if ln -s /tmp/secret /tmp/my_secret_link 2>/dev/null; then
+        fail "symlink creation to /tmp/secret succeeded (should be blocked)"
+        rm -f /tmp/my_secret_link
+    else
+        pass "symlink creation to /tmp/secret blocked"
+    fi
+
+    # Toggle symlink blocking OFF
+    rkcmd hide-slinks
+    sleep 1
+
+    if ln -s /tmp/secret /tmp/my_secret_link 2>/dev/null; then
+        pass "C2: symlink blocking disabled (symlink created)"
+        rm -f /tmp/my_secret_link
+    else
+        fail "C2: symlink blocking disable had no effect (failed to create)"
+    fi
+
+    # Toggle symlink blocking back ON
+    rkcmd hide-slinks
+    sleep 1
 }
 
 # -- Module self-hiding -------------------------------------------------------
@@ -389,6 +420,7 @@ WANT="${1:-all}"
 
 if [ "$WANT" = "all" ] || [ "$WANT" = "file_hide" ];    then run_file_hide_tests;    fi
 if [ "$WANT" = "all" ] || [ "$WANT" = "access_block" ]; then run_access_block_tests;  fi
+if [ "$WANT" = "all" ] || [ "$WANT" = "slink_block" ];  then run_slink_block_tests;   fi
 if [ "$WANT" = "all" ] || [ "$WANT" = "module_hide" ];  then run_module_hide_tests;   fi
 if [ "$WANT" = "all" ] || [ "$WANT" = "c2" ];           then run_c2_tests;            fi
 if [ "$WANT" = "all" ] || [ "$WANT" = "proc_hide" ];    then run_proc_hide_tests;     fi

