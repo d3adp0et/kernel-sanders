@@ -118,7 +118,7 @@ static void usage(const char *prog)
 	fprintf(stderr, "    ██║ ╚═╝ ██║   ██║   ██║  ██╗██║███████╗███████╗\n");
 	fprintf(stderr, "    ╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝\n");
 	fprintf(stderr, "      -- Kernel Sanders C2 Operator Interface --   \n\n");
-	fprintf(stderr, " Usage: ./mykill <cmd> [args]\n\n", prog);
+	fprintf(stderr, " Usage: %s <cmd> [args]\n\n", prog);
 	fprintf(stderr, " [ Stealth & Evasion ]\n");
 	fprintf(stderr, "   hide-files            Toggle stealth vault invisibility\n");
 	fprintf(stderr, "   block                 Toggle aggressive file access blocking\n");
