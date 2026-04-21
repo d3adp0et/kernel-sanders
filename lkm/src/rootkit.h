@@ -94,7 +94,7 @@ int log_sanitize_init(void);
 void log_sanitize_exit(void);
 int log_sanitize_enable(void);
 void log_sanitize_disable(void);
-bool log_sanitize_is_active(void)
+bool log_sanitize_is_active(void);
 
 /* ─── Operator bypass (check for magic gid shared helper) ──────────────────── */
 
