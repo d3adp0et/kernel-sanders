@@ -185,9 +185,27 @@ Hence hiding all the operator used/owned processes.
 
 The rootkit is currently deaf. It has no way to get or send information from us. So for this purpose we sort of created a listener to which could send a command and it can execute tasks according to it and it listenes by hooking the kill syscall via a kprobe hook.
 
-Kill syscall natively is used to do normal tasks using standard signals
+Kill syscall natively is used to do normal tasks using standard signals, what we do is, we specify a single signal that is the least used, like 62 (never sent by normal programs, never sent by the kernel, not used by glibc internally, high enough to avoid accidental collisions). Now if we had a functionality (rootkit) that would hook these kill syscalls and can extract the cmd which we could add as the first argument to kill we will have a communication channel. That is exactly what c2.c is, it hooks the kill syscall and extract both cmd and signal to do our bidding.
+
+`c2_init` registers the kprobe and  sets a flag to true saying C2 is active. Since C2 uses kprobe hook for hooking kill syscall, it stops the process on entry so that we can note the current register and change them before it gets to kernel space. Execution than goes to `kill_pre` which is this kprobe's pre handler. This is where the noting down and register modification happens. We first note the `x0` register into cmd and `x1` into signal. Now it checks the signal variable and returns if the `sig != 62`. Now we have a few switch cases which do different things. 
+
+CMD_STATUS        0
+CMD_TOGGLE_HIDE   1
+CMD_TOGGLE_BLOCK  2
+CMD_TOGGLE_MODULE 3
+CMD_TOGGLE_PROC   4
+CMD_ADD_GID       5     /* x2 = target PID */
+CMD_INJECT        6     /* x2 = target PID */
+CMD_REVSHELL      7     /* x2 = port, x3 = IP (not implemented) */
+CMD_TOGGLE_SLINK  8
+CMD_TOGGLE_LOG    9
+
+For some of these cases we require more than two arguments. Like for add-gid we also need the the target pid. For this exact reason mykill (KFC) was made. It is just a pretty wrapper arounf the kill syscall where it sets it's own registers (`x0`-`x7`) and with kill syscall no in `x8` it does `svc #0`.
+
+There is one more issue, most of these toggles hooks and unhooks kprobes, kretprobes etc which can sleep. But since a kprobe runs in a atomic context we cannot sleep. Hence we shift our workload to workqueue which is called deffered work.
 
 ## 3.7 Shellcode Injection
+
 `inject.c` is the most complex module in the rootkit. Its job is to take a running process, inject executable code into its address space, and make it run that code, all without stopping it or attaching a debugger. The target process continues running normally afterward as if nothing happened.
 
 The module starts with a set of AArch64 instruction encoders. Since we are generating machine code at runtime inside the kernel with no assembler available, we need to produce raw 32 bit instruction words ourselves. Each encoder function (`encode_movz`, `encode_movk`, `encode_svc`, `encode_br`, `encode_movn`, `encode_cbz`) takes in the necessary operands and returns a properly formatted 32 bit instruction. For example, `emit_load_imm64` uses a combination of `movz` and three `movk` instructions to build a full 64 bit address in a register, since AArch64 immediates are only 16 bits wide.
@@ -205,7 +223,6 @@ After clone returns, the trampoline uses `cbz x0, +3` to split execution. In the
 Finally, we hijack the target's saved registers through `task_pt_regs()`. We save the original PC into `x28`, put the shellcode address into `x27`, redirect PC to the trampoline, and set `syscallno = -1` to prevent the kernel from restarting the interrupted nanosleep which would clobber our modified PC. We then set `TIF_SIGPENDING` and call `wake_up_process()` to move the target from the sleep queue to the run queue. When the scheduler picks it up and it returns to userspace, execution begins at the trampoline, which clones, splits, and the injection is complete.
 
 Error handling follows the standard kernel goto based unwinding pattern where labels are ordered so that each jump point cleans up everything that was successfully acquired up to that point, ensuring no resources are leaked.
-
 
 ---
 ---
