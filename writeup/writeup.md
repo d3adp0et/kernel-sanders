@@ -21,6 +21,8 @@ CY-4973/7790 -- Linux Kernel Security Writeup
 7. [Gaps](#7-gaps)
 8. [Blockers](#8-blockers)
 9. [Building and Running](#10-building-and-running)
+
+---
 ---
 
 ## 1. Project Overview
@@ -29,6 +31,7 @@ KERNEL SANDERS is a fully automated, multi-stage kernel exploitation chain targe
  
 The chain delivers the rootkit entirely in memory, escalates privileges from analyst to root, loads the rootkit kernel module reflectively, exfiltrates classified PIR files, and leaves a covert control interface, while trying to wipe out some forensic evidence in the process. 
 
+---
 ---
 
 ## 2. Attack Chain
@@ -44,6 +47,8 @@ The entire chain runs over a single inherited file descriptor (fd 3). This is cr
 | rootkit | none | none | ring 0 |
 
 ---
+---
+
 ## 3. Component Breakdown
  
 ### 3.1 Beachhead - Initial Access
@@ -106,6 +111,59 @@ After exfil completes the loader redirects stdin, stdout, and stderr to fd 3 and
 **Snitch Evasion** 
 Before loading the rootkit, the loader neutralises snitch. It scans ```/proc``` for a process named ```snitch_watcher``` that is the process responsible for receiving and reporting snitch's detections and kills it. Then it unloads the snitch kernel module using the ```delete_module``` syscall.
 
+---
+
+### 3.5 The Rootkit
+
+Just like it's definition, the rootkit's purpose here is to actively hide our payloads and activity which may lead to disruption on our operation or getting caught.
+
+When the rootkit.ko is loaded, it's very first entry point is the `rootkit_init` function inside `rootkit.c`. We will start our explanation from there.
+
+#### 3.5.1 rootkit.c
+
+**What it does:** `rootkit.c` is responsible for a few things. By definition it does the init/exit of all our other modules but the functionality of access blocking for our secret vaults (`/dev/sh/secret` and `/tmp/secret`) is also written inside it. 
+
+`rootkit_init()` starts by calling the init blocks of all the other modules while also processing each and every module's return value. If any of the modules returns an error, the program jumps to the goto based error winding section at the end which gracefull calls the exit functions of all the successful module initializations (if any).
+
+When the blocking_init() is called, this is where the blocking hook functionality comes in. it first takes a `unsigned long target_func_addr` and does what is called the kprobe lookup trick (written in `rootkit.h`) to get the address of the required symbol, which is `do_sys_openat2`. Since `register_kprobe`calls kallsyms internally, whenever a kprobe is registred on a symbol, it looks up that symbol and writes the address in the addr member of kprobe struct. This trick is helpful to resolve addresses of unexported symbols. Just as we get the target address we call `ftrace_set_filter_ip()` (with reset set to 0), which blocks all operations that do not match the target's address so that our ftrace does not hook all the functions of the kernel. Only after this do we call the `register_ftrace_function()`, and now our execution goes to blocking_callback().
+
+`blocking_callback()` handles the main blocking logic. It first takes the filename from openat call's x1 register (2nd argument) into a userland character string, which we then copy to a kernel buffer using `strncpy_from_user()`. Since we cannot use a function like `kern_path()` which would automatically resolve our string in case it contains any traversal path, because the `kern_path()` tends to sleep and we are in a atomic context, we made a function called `normalize_path()` which would take a buffer and give us an absolute path solely by doing string manipulation. This function takes a path such as `/mnt/shared/capstone/../../../../tmp/secret/flag.txt` and keep track of the `/` to do necessary actions. Example walkthrough: for the input `/mnt/shared/capstone/../../../../tmp/secret/flag.txt`
+
+| Step | Component | Action                | Stack depth | Output so far        |
+|------|-----------|----------------------|-------------|----------------------|
+| 0    | /         | write root           | 1           | /                    |
+| 1    | mnt       | push & copy          | 2           | /mnt/                |
+| 2    | shared    | push & copy          | 3           | /mnt/shared/         |
+| 3    | capstone  | push & copy          | 4           | /mnt/shared/capstone/|
+| 4    | ..        | pop (remove capstone) | 3           | /mnt/shared/         |
+| 5    | ..        | pop (remove shared)  | 2           | /mnt/                |
+| 6    | ..        | pop (remove mnt)     | 1           | /                    |
+| 7    | ..        | already at root, stay | 1           | /                    |
+| 8    | tmp       | push & copy          | 2           | /tmp/                |
+| 9    | secret    | push & copy          | 3           | /tmp/secret/         |
+| 10   | flag.txt  | push & copy          | 4           | /tmp/secret/flag.txt |
+
+this results into an absolute path such as `/tmp/secret/flag.txt` which then is blocked.
+
+Now coming to the actual blocking pattern, it goes like this: we take the now resolved path and see if matches with any of the secret vaults, if yes it also checks if it has a trailing null value or a `/` so that we do not block access to files like /tmp/secret123/. After this, we check if the caller (who ever did something like `cat`) has the `MAGIC_GID`, if they do not, e zero out the regs[0] field hence giving a bad address error (filename is now just `0`). 
+
+Though this approach works here, it has a major flaw. This does not handle/block symlinks made to hidden directories (which `kern_path()` would have), hence symlinks would pass this blocking -+ Our remediation: A hook on do_symlinkat.
+
+#### 3.5.2 slink_block.c
+
+This is again a hook using the ftrace functionality, with the exact same blocking pattern (`inner_regs->regs[0] = 0;` //zero the old path) and again has the same normalize_path() to remove the possibility of bypass using traversal paths. The only difference here is that we now hook on `__arm64_sys_symlinkat` symbol. We started out by doing a hook on do_symlinkat (kernel land symbol) but for some reason the cpu wasn't allowing a hook on it so we shifted to this userland counterpart of the same syscall. The only new thing to implement here would to get the filename using the double pt_regs shenanigans.
+
+On ARM64, when a function tracer (ftrace) hook intercepts a syscall, the hook's own callback receives a `pt_regs` structure representing the register state at the point of instrumentation. However, this outer `pt_regs` does not directly contain the syscall arguments as passed by userspace. Instead, the kernel's syscall wrapper convention on ARM64 means the wrapper function itself receives a single argument, a pointer to a second, inner `pt_regs`, which is stored in `regs[0]` of the outer structure. This inner pt_regs holds the actual CPU register state captured at the syscall entry boundary, and it is there that the original userspace arguments (such as filenames or flags passed in `x0`, `x1`, etc.) can be found. The result is a two level indirection: the ftrace provided registers point to the wrapper's argument, which is itself a pointer to the real saved user registers.
+
+This will now enable us to block any symlinks being created on our secret vaults!
+
+#### 3.5.3 file_hide.c
+
+Moving on to the functionality where we hide our secret vaults from being shown if a non operator user does ls (list out directory entries). As we go from one functionality to another we hope these description become shorter since most use snippets from one another.
+
+Here we are doing a Kretprobe on the `__arm64_sys_getdents64` syscall.
+
+---
 ---
 
 ## 4. Design Choices
