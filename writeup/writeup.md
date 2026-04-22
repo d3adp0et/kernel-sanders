@@ -169,6 +169,24 @@ Now, on finally reaching return handler of our kretprobe, we first filter the ca
 
 For each entry, we compare its name against our hidden filename. If it doesn't match, we simply move on to the next entry. If it does match and it's not the first entry in the buffer, we make the previous entry absorb the hidden one by adding the hidden entry's record length to the previous entry's `d_reclen`, effectively making the kernel skip over it. If the match happens to be the very first entry, there is no previous entry to expand, so instead we `memmove` the entire remaining buffer forward to overwrite it and shrink `total_bytes` accordingly, without advancing the offset since new data now sits at the same position.
 
+Once the hiding is done, we write filtered buffer back to userspace (using `copy_to_user()`) and also send the new total bytes count in the `0` register.
+
+#### 3.5.4 proc_hide.c
+
+Moving on to the other kretprobe hook on the same symbol, `getdents64`, here we hide any and all processes that has the `MAGIC_GID` as a part of their supplementary groups. The rest of the filtering stays the same as `file_hide.c` we first do some no-op checks like if `getdents64` return `0`, or if the file being listed is `/proc` and then walk the dirent buffer to find entries with `MAGIC_GID` in their supplementary groups.
+
+Now the main question is how do we check if process has `MAGIC_GID`. Also how does a process get this `MAGIC_GID` in their supplementary groups. For these two questions, we implement `process_has_magic_gid()` and `proc_hide_add_pid()` respectively.
+
+Starting with `proc_hide_add_pid()`. `proc_hide_add_pid()` is how we grant a process the operator status. It takes a pid, looks up its task_struct under RCU protection, and then calls `prepare_kernel_cred()` to get a mutable copy of that task's credentials. From there, we allocate a `new group_info` that is one slot larger than the original, copy over all the existing supplementary groups, and append our `MAGIC_GID` at the end. After sorting the group list with `groups_sort()` (which the kernel expects), we swap the new credentials onto the target task by replacing both `real_cred` (how the kernel acts upon the task) and `cred` (how the task acts upon other objects) using `rcu_assign_pointer()`. The old credentials are then released. At the end of this, the process now carries our magic group and will pass all the operator checks across our rootkit's hooks.
+
+`process_has_magic_gid()` is the counterpart that lets us check if a given process is one of ours. It takes a directory name from `/proc` (which is just the pid as a string), converts it to an integer using `kstrtoint()`, and looks up the corresponding `task_struct` under RCU (cause we are in a atmoic context). Once we have the task, we grab its credentials and iterate over its supplementary group list, checking each gid against our `MAGIC_GID`. If we find a match, we know this process belongs to an operator and return true, which tells the caller (our getdents64 hook) to not hide this entry from `/proc`. If the name isn't a valid pid or the task doesn't carry our magic group, we simply return false.
+
+Hence hiding all the operator used/owned processes.
+
+#### 3.5.5 c2.c
+
+
+
 ---
 ---
 
