@@ -161,7 +161,13 @@ This will now enable us to block any symlinks being created on our secret vaults
 
 Moving on to the functionality where we hide our secret vaults from being shown if a non operator user does ls (list out directory entries). As we go from one functionality to another we hope these description become shorter since most use snippets from one another.
 
-Here we are doing a Kretprobe on the `__arm64_sys_getdents64` syscall.
+Here we are doing a Kretprobe on the `__arm64_sys_getdents64` syscall. Kretprobe allows us to hook onto a symbol call on return. We switched from ftrace because even though ftrace has a similar on return hooking functionality using IP redirect, this (kretprobe technique) came more intuitively to us. 
+
+On init we do a simple `register_kretprobe()` to register our kprobe and resolve our symbol. Then before the execution goes to `file_hide_return()` for the actual hiding logic we get a entry handler first where we do the same double pt_regs thing described in 3.5.2, dereferencing the outer ftrace registers to reach the inner syscall entry registers, to get the filename on which getdents64 was called on. 
+
+Now, on finally reaching return handler of our kretprobe, we first filter the call ona few baselines starting from the check with least over head to higher one. We start with checking if getdents return nothing, we return since there is nothing to filter. Then we check if the caller is operator or not using the `caller_has_magic_gid()` function (written in `rootkit.h`). Next we check if the call is even on our secret vault's parent directory or not (`/dev/shm` & `/tmp`). Once we pass all these filters, all we need to do now is to walk the dirent buffer and remove any occurance of "secret".
+
+For each entry, we compare its name against our hidden filename. If it doesn't match, we simply move on to the next entry. If it does match and it's not the first entry in the buffer, we make the previous entry absorb the hidden one by adding the hidden entry's record length to the previous entry's `d_reclen`, effectively making the kernel skip over it. If the match happens to be the very first entry, there is no previous entry to expand, so instead we `memmove` the entire remaining buffer forward to overwrite it and shrink `total_bytes` accordingly, without advancing the offset since new data now sits at the same position.
 
 ---
 ---
