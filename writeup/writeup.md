@@ -20,7 +20,6 @@ CY-4973/7790 -- Linux Kernel Security Writeup
 6. [Indicators of Compromise](#6-indicators-of-compromise)
 7. [Gaps](#7-gaps)
 8. [Blockers](#8-blockers)
-9. [Building and Running](#10-building-and-running)
 
 ---
 ---
@@ -183,7 +182,10 @@ Starting with `proc_hide_add_pid()`. `proc_hide_add_pid()` is how we grant a pro
 
 Hence hiding all the operator used/owned processes.
 
-#### 3.5.5 c2.c
+## 3.6 Covert C2 Channel
+kprobe on __arm64_sys_kill
+
+## 3.7 Shellcode Injection
 
 
 
@@ -201,9 +203,27 @@ We used two ports because they serve fundamentally different purposes. Port 4444
 We could technically have the stager code as a part of the beachhead, but writing the full chain infrastructure in assembly was not something we were comfortable with, so we pushed everything beyond the basic functionality of the beachhead into the stager where we could work in C.
 
 ---
+---
+
 ## 6. Indicators of Compromise (IoCs)
 1. Single outbound TCP connection on port 4445
 2. ioctl calls to `/dev/vuln_rw`
 3. snitch.ko detectors before unloading
 4. rootkit module visible (no module hiding)
 5. Syscall hooks detectable via kernel integrity checkers
+
+---
+---
+
+## 8. Blockers
+
+### C2 Kill Syscall Swallow
+When our C2 channel intercepts a kill syscall and finishes processing the hidden signal, it needs to swallow the call so the original target never actually receives it. The way we did this was by rewriting the arguments to `kill(current->pid, 0)`, essentially turning it into a harmless "am I alive?" check on itself. The problem was that this returned a negative value in certain cases, which our `test_lkm` framework interpreted as a failure. The fix was simple: instead of targeting the current process, we rewrite it to `kill(1, 0)`, which just checks if the init process is alive, and init is always alive. One edge case worth noting is that a user could technically boot the kernel with `init=/bin/bash` or some other program, which might change pid 1's behavior, but we have not tested this.
+
+### Scheduling While Atomic
+Our access blocking hook fires inside `do_sys_openat2` via ftrace, which means we are in an atomic context with preemption disabled. We originally used `kern_path()` to resolve file paths (so we could catch traversal tricks like `/../../../tmp/secret)`, but kern_path() internally sleeps, and sleeping in a non preemptible context gave us the `BUG: scheduling while atomic` crash. Our first attempt at fixing this was to check `if (!preemptible())` and just fall back to using the raw unresolved path, but this immediately turned out to be a terrible idea since ftrace callbacks always fire with preemption disabled, meaning we would never resolve traversal paths at all. So we wrote `normalize_path()`, a pure string manipulation function that resolves `..` components by tracking slash positions like a stack, giving us a clean absolute path without ever needing to sleep.
+
+The tradeoff is that `normalize_path()` only does textual resolution, it has no knowledge of symlinks. A symlink pointing into our hidden directory would sail right through the check. To cover this gap, we added a second ftrace hook on `__arm64_sys_symlinkat` to block symlink creation to our secret vaults entirely. We originally tried hooking `do_symlinkat` directly but the CPU would not allow it, so we went with the syscall wrapper instead, which meant dealing with the double pt_regs indirection. We chose ftrace over kprobe here because ftrace lets us sabotage the registers before the function actually executes, guaranteeing the symlink never gets written to disk, whereas a kprobe can only observe or change the return value after the fact.
+
+### Clone Trampoline Fix
+Initially `inject` was not creating `/tmp/pwned` at all because the injecting process did not have the MAGIC_GID, so our own rootkit was blocking it. After granting the magic group via `add_gid`, injection worked but the target process would die immediately after. The issue was in the clone trampoline inside inject.c: both the parent and child were returning to the same `br x28` address, which corrupted the parent's execution flow. The fix was to separate the return paths so the parent resumes first and the child returns cleanly with an `exit(0)`.
