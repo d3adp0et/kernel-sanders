@@ -119,7 +119,7 @@ We used two ports because they serve fundamentally different purposes. Port 4444
 We could technically have the stager code as a part of the beachhead, but writing the full chain infrastructure in assembly was not something we were comfortable with, so we pushed everything beyond the basic functionality of the beachhead into the stager where we could work in C.
 
 ---
-## 6. Indicators of Compromise
+## 6. Indicators of Compromise (IoCs)
 1. Single outbound TCP connection on port 4445
 2. ioctl calls to `/dev/vuln_rw`
 3. snitch.ko detectors before unloading
