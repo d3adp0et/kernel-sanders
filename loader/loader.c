@@ -145,6 +145,7 @@ int main(void)
 	char *sh_argv[] = { "/bin/sh", "-i", NULL };
 	char *sh_envp[] = {
 		"TERM=xterm",
+		"HISTFILE=",        //loads the shell without cmd history tracking
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		NULL
 	};
