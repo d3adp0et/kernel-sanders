@@ -239,6 +239,14 @@ We used two ports because they serve fundamentally different purposes. Port 4444
 We could technically have the stager code as a part of the beachhead, but writing the full chain infrastructure in assembly was not something we were comfortable with, so we pushed everything beyond the basic functionality of the beachhead into the stager where we could work in C.
 
 ---
+## 5. Special Feature - Kernel Log Sanitization
+The kernel log sanitizer intercepts and filters rootkit-related messages from the kernel ring buffer before they reach userspace. The sanitizer hooks two functions using kretprobe.   
+`__arm64_sys_syslog`- the syscall handler behind dmesg --syslog and klogctl(). The entry handler captures the userspace buffer pointer before the syscall runs. The return handler reads the populated buffer back from userspace, scans each line for blacklisted prefixes, removes matching lines entirely via memmove, and writes the filtered result back. It also updating the return value to reflect the new shorter length.
+
+`devkmsg_read` — the function that handles reads from /dev/kmsg, which is the path default dmesg uses. The same entry/return pattern applies here, but instead of removing lines the handler blanks matching message text with spaces. The record structure of /dev/kmsg — priority,seq,timestamp,flags;message\n which means removing a record entirely would shift sequence numbers and was causing a kernel panic.
+
+**What we should have done** - Hook earlier in the log path. Rather than filtering at the read interface, a more robust approach would intercept `vprintk_emit` - the function all kernel log messages pass through before entering the ring buffer. Filtering there would mean the messages never land in the buffer at all.
+
 ---
 
 ## 6. Indicators of Compromise (IoCs)
