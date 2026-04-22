@@ -225,7 +225,6 @@ Finally, we hijack the target's saved registers through `task_pt_regs()`. We sav
 Error handling follows the standard kernel goto based unwinding pattern where labels are ordered so that each jump point cleans up everything that was successfully acquired up to that point, ensuring no resources are leaked.
 
 ---
----
 
 ## 4. Design Choices
 
@@ -257,7 +256,6 @@ The kernel log sanitizer intercepts and filters rootkit-related messages from th
 4. rootkit module visible (no module hiding)
 5. Syscall hooks detectable via kernel integrity checkers
 
----
 ---
 
 ## 7. Blockers
