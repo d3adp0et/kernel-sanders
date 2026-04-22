@@ -8,8 +8,8 @@ CY-4973/7790 -- Linux Kernel Security Writeup
 1. [Project Overview](#1-project-overview)
 2. [Attack Chain](#2-attack-chain)
 3. [Component Breakdown](#3-component-breakdown)
-   - [3.1 Beachhead - Initial Access](#31-beachhead--initial-access)
-   - [3.2 Stager - In-Memory Delivery](#32-stager--in-memory-delivery)
+   - [3.1 Beachhead - Initial Access](#31-beachhead-initial-access)
+   - [3.2 Stager - In-Memory Delivery](#32-stager-in-memory-delivery)
    - [3.3 Local Privilege Escalation](#33-local-privilege-escalation)
    - [3.4 Reflective Rootkit Loader](#34-reflective-rootkit-loader)
    - [3.5 The Rootkit](#35-the-rootkit)
@@ -80,4 +80,11 @@ The stager then executes exploit_privesc and is replaced entirely by it. From th
 
 Every Linux process is represented in the kernel as a ```task_struct```. All task_structs are linked in a circular doubly-linked list via the ```tasks``` field. The kernel checks current->cred->uid for privilege decisions. If the uid is 0, we are root.
 
-Step 1 - init_task is the kernel's first process — PID 0, always named "swapper/0". Its address is hardcoded from /proc/kallsyms on the target VM. The exploit reads 4KB from init_task and scans for the string "swapper/0" to locate the comm field. The cred pointer is then derived as:
+**Step 1** - ```init_task``` is the kernel's first process, always named "swapper/0". Its address is hardcoded from /proc/kallsyms on the target VM. The exploit reads 4KB from ```init_task``` and scans for the string "swapper/0" to locate the comm field. The cred pointer is then derived as :
+```
+cred_ptr_off = comm_off - 16;
+```  
+**Step 2** - The exploit walks the init_task.tasks circular linked list, reading each task's pid field until it finds its own PID obtained via getpid(). The tasks field stores a pointer to the tasks field of the next struct. The base is recovered by subtracting the tasks offset.  
+
+**Step 3** - After our process's task_struct is located, it reads the cred pointer and zeroes all eight uid/gid fields. 
+
