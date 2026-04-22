@@ -18,8 +18,7 @@ CY-4973/7790 -- Linux Kernel Security Writeup
 4. [Design Choices](#4-design-choices)
 5. [Special Feature - Kernel Log Sanitization](#5-special-feature--kernel-log-sanitization)
 6. [Indicators of Compromise](#6-indicators-of-compromise)
-7. [Gaps](#7-gaps)
-8. [Blockers](#8-blockers)
+7. [Blockers](#7-blockers)
 
 ---
 ---
@@ -183,16 +182,36 @@ Starting with `proc_hide_add_pid()`. `proc_hide_add_pid()` is how we grant a pro
 Hence hiding all the operator used/owned processes.
 
 ## 3.6 Covert C2 Channel
-kprobe on __arm64_sys_kill
+
+The rootkit is currently deaf. It has no way to get or send information from us. So for this purpose we sort of created a listener to which could send a command and it can execute tasks according to it and it listenes by hooking the kill syscall via a kprobe hook.
+
+Kill syscall natively is used to do normal tasks using standard signals
 
 ## 3.7 Shellcode Injection
+`inject.c` is the most complex module in the rootkit. Its job is to take a running process, inject executable code into its address space, and make it run that code, all without stopping it or attaching a debugger. The target process continues running normally afterward as if nothing happened.
 
+The module starts with a set of AArch64 instruction encoders. Since we are generating machine code at runtime inside the kernel with no assembler available, we need to produce raw 32 bit instruction words ourselves. Each encoder function (`encode_movz`, `encode_movk`, `encode_svc`, `encode_br`, `encode_movn`, `encode_cbz`) takes in the necessary operands and returns a properly formatted 32 bit instruction. For example, `emit_load_imm64` uses a combination of `movz` and three `movk` instructions to build a full 64 bit address in a register, since AArch64 immediates are only 16 bits wide.
+
+The core of the injection is the clone trampoline, an 18 instruction program that gets written into the target's executable memory. The trampoline calls `clone()` with `CLONE_VM | CLONE_THREAD | CLONE_SIGHAND` to create a child thread inside the target process. `CLONE_VM` is essential because the child needs access to the shellcode page which lives in the parent's address space. `CLONE_THREAD` makes the child appear as a thread of the parent rather than a separate process, so from the outside only one process is visible. `CLONE_SIGHAND` is required whenever `CLONE_THREAD` is set since threads in the same group must share signal handlers.
+
+After clone returns, the trampoline uses `cbz x0, +3` to split execution. In the parent, `x0` is the child's TID (nonzero), so it falls through to `movn x0, #3` which sets `x0 = -EINTR` and then does `br x28` to jump back to the original PC. The C library sees the interrupted syscall and simply restarts nanosleep, so the parent resumes as if nothing happened. In the child, `x0` is zero so it takes the branch, loads the exit stub address into `x28`, and does `br x27` to jump to the shellcode. When the shellcode finishes and does its own `br x28`, it lands on the exit stub instead of the parent's code, calling `exit(0)` cleanly. This separation was a bug fix for us, originally both parent and child had the same `x28` value pointing to the parent's original PC. The child would jump there on an empty stack, segfault, and because of CLONE_THREAD the segfault would kill the entire thread group including the parent.
+
+`load_staged_shellcode()` handles loading operator provided shellcode from `/tmp/secret/rk_sc`. It uses kernel internal VFS functions (`filp_open`, `kernel_read`, `filp_close`) rather than syscalls, which means these reads do not go through `do_sys_openat2` and our own blocking callback does not interfere with them. After reading the shellcode, the staging file is deleted using `vfs_unlink` as anti forensics, the binary only existed on disk briefly. If no staging file is found, the module falls back to a hardcoded default shellcode that creates `/tmp/pwned` as a proof of concept.
+
+`find_exec_addr()` walks the target's VMAs to find a suitable location for the trampoline. It looks for the first executable region with enough room after offset 0x100, since the first `0x100` bytes of an ELF binary contain the ELF header and program headers which we do not want to overwrite. Once a location is found, `access_process_vm` with `FOLL_WRITE | FOLL_FORCE` is used to write the trampoline into the read only text segment, which triggers Copy on Write so the kernel makes a private writable copy of that page for our target without affecting other instances of the same binary.
+
+`inject_trigger()` is the orchestrator that ties everything together. It first looks up the target `task_struct` under RCU and grabs a reference with `get_task_struct()`. It then loads the shellcode (staged or default). Since we need to call `vm_mmap()` to allocate pages in the target's address space, but `vm_mmap` operates on `current->mm` and we are running in a workqueue (kernel thread with no user address space), we use `kthread_use_mm()` to temporarily borrow the target's `mm_struct`. With the borrowed mm, we allocate an RWX code page and an RW stack page in the target's address space using `vm_mmap`, write the shellcode into the code page with `copy_to_user`, and append the exit stub right after it (aligned to 4 bytes). After releasing the borrowed mm with `kthread_unuse_mm()`, we build the trampoline, find executable space in the target, and write it in using `access_process_vm`.
+
+Finally, we hijack the target's saved registers through `task_pt_regs()`. We save the original PC into `x28`, put the shellcode address into `x27`, redirect PC to the trampoline, and set `syscallno = -1` to prevent the kernel from restarting the interrupted nanosleep which would clobber our modified PC. We then set `TIF_SIGPENDING` and call `wake_up_process()` to move the target from the sleep queue to the run queue. When the scheduler picks it up and it returns to userspace, execution begins at the trampoline, which clones, splits, and the injection is complete.
+
+Error handling follows the standard kernel goto based unwinding pattern where labels are ordered so that each jump point cleans up everything that was successfully acquired up to that point, ensuring no resources are leaked.
 
 
 ---
 ---
 
 ## 4. Design Choices
+
 **1. Single inherited socket over multiple connections**  
 We decide dto pin the socket to fd 3 in the stager via dup2 so all the subsequent binary inherits the same live TCP connection across execve. So we would have one outbound network event for the entire chain. The alternative approach was each stage opening its own connection, but that would means multiple detectable network events and socket code in every binary.
 
@@ -206,6 +225,7 @@ We could technically have the stager code as a part of the beachhead, but writin
 ---
 
 ## 6. Indicators of Compromise (IoCs)
+
 1. Single outbound TCP connection on port 4445
 2. ioctl calls to `/dev/vuln_rw`
 3. snitch.ko detectors before unloading
@@ -215,15 +235,18 @@ We could technically have the stager code as a part of the beachhead, but writin
 ---
 ---
 
-## 8. Blockers
+## 7. Blockers
 
 ### C2 Kill Syscall Swallow
+
 When our C2 channel intercepts a kill syscall and finishes processing the hidden signal, it needs to swallow the call so the original target never actually receives it. The way we did this was by rewriting the arguments to `kill(current->pid, 0)`, essentially turning it into a harmless "am I alive?" check on itself. The problem was that this returned a negative value in certain cases, which our `test_lkm` framework interpreted as a failure. The fix was simple: instead of targeting the current process, we rewrite it to `kill(1, 0)`, which just checks if the init process is alive, and init is always alive. One edge case worth noting is that a user could technically boot the kernel with `init=/bin/bash` or some other program, which might change pid 1's behavior, but we have not tested this.
 
 ### Scheduling While Atomic
+
 Our access blocking hook fires inside `do_sys_openat2` via ftrace, which means we are in an atomic context with preemption disabled. We originally used `kern_path()` to resolve file paths (so we could catch traversal tricks like `/../../../tmp/secret)`, but kern_path() internally sleeps, and sleeping in a non preemptible context gave us the `BUG: scheduling while atomic` crash. Our first attempt at fixing this was to check `if (!preemptible())` and just fall back to using the raw unresolved path, but this immediately turned out to be a terrible idea since ftrace callbacks always fire with preemption disabled, meaning we would never resolve traversal paths at all. So we wrote `normalize_path()`, a pure string manipulation function that resolves `..` components by tracking slash positions like a stack, giving us a clean absolute path without ever needing to sleep.
 
 The tradeoff is that `normalize_path()` only does textual resolution, it has no knowledge of symlinks. A symlink pointing into our hidden directory would sail right through the check. To cover this gap, we added a second ftrace hook on `__arm64_sys_symlinkat` to block symlink creation to our secret vaults entirely. We originally tried hooking `do_symlinkat` directly but the CPU would not allow it, so we went with the syscall wrapper instead, which meant dealing with the double pt_regs indirection. We chose ftrace over kprobe here because ftrace lets us sabotage the registers before the function actually executes, guaranteeing the symlink never gets written to disk, whereas a kprobe can only observe or change the return value after the fact.
 
 ### Clone Trampoline Fix
+
 Initially `inject` was not creating `/tmp/pwned` at all because the injecting process did not have the MAGIC_GID, so our own rootkit was blocking it. After granting the magic group via `add_gid`, injection worked but the target process would die immediately after. The issue was in the clone trampoline inside inject.c: both the parent and child were returning to the same `br x28` address, which corrupted the parent's execution flow. The fix was to separate the return paths so the parent resumes first and the child returns cleanly with an `exit(0)`.
