@@ -1,0 +1,21 @@
+# requirements.txt — kernel-sanders
+#
+# Python dependencies for exploit.py
+# All modules used are part of the Python standard library (Python 3.6+):
+#   socket, struct, time, threading, pathlib, argparse, base64, os, sys
+#
+# No pip packages required.
+#
+# ── System dependencies ───────────────────────────────────────────────────────
+#
+# These must be installed on the host separately:
+#
+#   make
+#   python3 (>= 3.6)
+#   qemu-system-aarch64
+#   aarch64-linux-gnu-gcc       (cross-compiler)
+#   aarch64-linux-gnu-binutils  (cross-assembler for shellcode)
+#
+# Additionally required (not in package repos — see make setup-kernel / make setup-target):
+#   Linux 6.6 kernel headers for AArch64  →  kernel/linux-6.6/
+#   Target QCOW2 image + kernel Image     →  target/

@@ -1,6 +1,56 @@
 # kernel-sanders 🐔
 ## TEAM - Alice and Bob
 
-A security capstone project designing a rootkit that demonstrates a full attack chain from initial exploitation to persistent kernel-level compromise with an encrypted C2 channel.
+**kernel-sanders** is a security capstone project implementing a full, automated attack chain against a hardened AArch64 Linux target — from initial code execution via a vulnerable network service, through kernel privilege escalation, to persistent kernel-level compromise via a custom loadable rootkit with a covert C2 channel, process/file hiding, shellcode injection, and encrypted exfiltration.
 
-<img width="1066" height="792" alt="image" src="https://github.com/user-attachments/assets/b95cda4e-ea02-4ec7-929f-d510cb509304" />
+---
+
+## Documentation
+
+- **[How to Run](documentation/how-to-run.md)** — build instructions, VM setup, running the exploit chain, and C2 usage
+- **[Writeup](writeup/writeup.md)** — full technical writeup covering design decisions, implementation details, and attack chain walkthrough
+- **[Key Bugs & Fixes](documentation/imp_bugs.md)** — notable bugs encountered during development
+- **[Design Changes](documentation/design-changes-made-to-tackle-bugs.md)** — design-level changes made to resolve bugs (scheduling-while-atomic, path normalization, symlink blocking)
+- **Poster** — coming soon (to be added to root)
+
+---
+
+## Attack Chain Overview
+
+kernel-sanders implements a 4-stage attack chain against MERIDIAN Defense Group's "Secure Terminal Service":
+
+```
+                    ┌─────────────────────┐
+  nc :11337 ───────►│  MERIDIAN Terminal  │
+                    │  submit → mmap RWX  │
+                    │  clone → exec code  │
+                    └────────┬────────────┘
+                             │ analyst (uid 1001)
+                    ┌────────▼────────────┐
+                    │  /dev/vuln_rwx      │  the JIT thing
+                    │  /dev/vuln_rw       │  the debug thing
+                    └────────┬────────────┘
+                             │ root (uid 0)
+                    ┌────────▼────────────┐
+                    │  load rootkit.ko    │
+                    │  (without insmod)   │
+                    └────────┬────────────┘
+                             │
+                    ┌────────▼────────────┐
+                    │  /home/director/    │
+                    │  classified/        │
+                    │  (the spicy stuff)  │
+                    └─────────────────────┘
+```
+
+```
+    ┌─────────────┐     ┌──────────────────┐     ┌──────────────┐     ┌──────────────┐
+    │   Stage 1   │     │     Stage 2      │     │   Stage 3    │     │   Stage 4    │
+    │   Initial   │────>│    Privilege     │────>│   Rootkit    │────>│     C2 +     │
+    │   Access    │     │   Escalation     │     │  Deployment  │     │ Exfiltration │
+    └─────────────┘     └──────────────────┘     └──────────────┘     └──────────────┘
+     nc target:1337      /dev/vuln_rwx or         load rootkit         covert C2
+     submit shellcode    /dev/vuln_rw              hide everything     read classified/
+     → code exec as      → root                   register hooks      exfil PIRs
+       analyst
+```
