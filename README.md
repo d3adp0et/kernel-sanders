@@ -12,6 +12,7 @@
 - **[Key Bugs & Fixes](documentation/imp_bugs.md)** -+ notable bugs encountered during development
 - **[Design Changes](documentation/design-changes-made-to-tackle-bugs.md)** -+ design-level changes made to resolve bugs (scheduling-while-atomic, path normalization, symlink blocking)
 - **Poster** -+ poster that was shown during the poster session.
+- **[COLDSPARK](COLDSPARK.md)** -+ Mission briefing from instructor.
 
 ---
 
@@ -19,38 +20,4 @@
 
 kernel-sanders implements a 4-stage attack chain against MERIDIAN Defense Group's "Secure Terminal Service":
 
-```
-                    ┌─────────────────────┐
-  nc :11337 ───────►│  MERIDIAN Terminal  │
-                    │  submit → mmap RWX  │
-                    │  clone → exec code  │
-                    └────────┬────────────┘
-                             │ analyst (uid 1001)
-                    ┌────────▼────────────┐
-                    │  /dev/vuln_rwx      │  the JIT thing
-                    │  /dev/vuln_rw       │  the debug thing
-                    └────────┬────────────┘
-                             │ root (uid 0)
-                    ┌────────▼────────────┐
-                    │  load rootkit.ko    │
-                    │  (without insmod)   │
-                    └────────┬────────────┘
-                             │
-                    ┌────────▼────────────┐
-                    │  /home/director/    │
-                    │  classified/        │
-                    │  (the spicy stuff)  │
-                    └─────────────────────┘
-```
-
-```
-    ┌─────────────┐     ┌──────────────────┐     ┌──────────────┐     ┌──────────────┐
-    │   Stage 1   │     │     Stage 2      │     │   Stage 3    │     │   Stage 4    │
-    │   Initial   │────>│    Privilege     │────>│   Rootkit    │────>│     C2 +     │
-    │   Access    │     │   Escalation     │     │  Deployment  │     │ Exfiltration │
-    └─────────────┘     └──────────────────┘     └──────────────┘     └──────────────┘
-     nc target:1337      /dev/vuln_rwx or         load rootkit         covert C2
-     submit shellcode    /dev/vuln_rw              hide everything     read classified/
-     → code exec as      → root                   register hooks      exfil PIRs
-       analyst
-```
+<img width="1186" height="793" alt="image" src="https://github.com/user-attachments/assets/a4f37c41-2948-46f6-9f74-968b56dc6ef0" />
