@@ -26,6 +26,6 @@ kernel-sanders implements a 4-stage attack chain against MERIDIAN Defense Group'
 
 ## Poster
 
-The poster we showed at the poster session. Download a pdf version [here](documentation/kernel-sanders-poster.pdf)
+The poster we showed at the poster session. Download a pdf version [here](documentation/kernel-sanders-poster.pdf).
 
 <img width="3456" height="2304" alt="Kernel Sanders" src="https://github.com/user-attachments/assets/4a025021-5e2d-4ea9-8f0a-8f95c2827fe3" />
