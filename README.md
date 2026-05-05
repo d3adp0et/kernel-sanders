@@ -11,7 +11,7 @@
 - **[Writeup](writeup/writeup.md)** -+ full technical writeup covering design decisions, implementation details, and attack chain walkthrough
 - **[Key Bugs & Fixes](documentation/imp_bugs.md)** -+ notable bugs encountered during development
 - **[Design Changes](documentation/design-changes-made-to-tackle-bugs.md)** -+ design-level changes made to resolve bugs (scheduling-while-atomic, path normalization, symlink blocking)
-- **Poster** -+ poster that was shown during the poster session.
+- **[Poster]** -+ poster that was shown during the poster session.
 - **[COLDSPARK](COLDSPARK.md)** -+ Mission briefing from instructor.
 
 ---
@@ -21,3 +21,11 @@
 kernel-sanders implements a 4-stage attack chain against MERIDIAN Defense Group's "Secure Terminal Service":
 
 <img width="1186" height="793" alt="image" src="https://github.com/user-attachments/assets/a4f37c41-2948-46f6-9f74-968b56dc6ef0" />
+
+---
+
+## Poster
+
+The poster we showed at the poster session. Download from [here](documentation/kernel-sanders-poster.pdf)
+
+<img width="3456" height="2304" alt="Kernel Sanders" src="https://github.com/user-attachments/assets/4a025021-5e2d-4ea9-8f0a-8f95c2827fe3" />
