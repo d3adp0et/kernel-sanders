@@ -1,4 +1,4 @@
-# How to Run — kernel-sanders
+# How to Run: kernel-sanders
 
 ## Prerequisites
 
@@ -11,6 +11,9 @@ sudo apt install make qemu-system-aarch64 gcc-aarch64-linux-gnu binutils-aarch64
 # Arch
 sudo pacman -S make qemu-system-aarch64 aarch64-linux-gnu-gcc python
 ```
+### Get the target
+The exact target this exploit works is clones in [here](target-env/).
+Replace the files in target-env with the files in this repository (with some extra additions), make kernel header and target image and the follow the building steps.
 
 ### Kernel Headers
 The rootkit must be compiled against Linux 6.6 AArch64 headers:
